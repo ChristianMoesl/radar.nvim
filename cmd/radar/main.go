@@ -9,13 +9,13 @@ import (
 	"os"
 	"time"
 
-	"cockpit.nvim/internal/client"
-	"cockpit.nvim/internal/collector"
-	"cockpit.nvim/internal/logging"
-	"cockpit.nvim/internal/process"
-	"cockpit.nvim/internal/server"
-	"cockpit.nvim/internal/socket"
-	"cockpit.nvim/internal/state"
+	"radar.nvim/internal/client"
+	"radar.nvim/internal/collector"
+	"radar.nvim/internal/logging"
+	"radar.nvim/internal/process"
+	"radar.nvim/internal/server"
+	"radar.nvim/internal/socket"
+	"radar.nvim/internal/state"
 )
 
 func main() {
@@ -51,7 +51,7 @@ func main() {
 
 func runDaemon() {
 	if pids, err := process.DaemonPIDs(); err == nil && len(pids) > 0 {
-		fmt.Fprintf(os.Stderr, "cockpit daemon already running: %v\n", pids)
+		fmt.Fprintf(os.Stderr, "radar daemon already running: %v\n", pids)
 		return
 	}
 
@@ -67,8 +67,8 @@ func runDaemon() {
 		fatal(err)
 	}
 
-	fmt.Fprintf(os.Stderr, "cockpit daemon listening on %s\n", path)
-	fmt.Fprintf(os.Stderr, "cockpit daemon logging to %s\n", logPath)
+	fmt.Fprintf(os.Stderr, "radar daemon listening on %s\n", path)
+	fmt.Fprintf(os.Stderr, "radar daemon logging to %s\n", logPath)
 	pidPath, err := process.WritePID()
 	if err != nil {
 		logger.Error("could not write pid file", "error", err)
@@ -98,10 +98,10 @@ func stopDaemon() {
 		fatal(err)
 	}
 	if len(pids) == 0 {
-		fmt.Println("cockpit daemon was not running")
+		fmt.Println("radar daemon was not running")
 		return
 	}
-	fmt.Printf("cockpit daemon stopped: %v\n", pids)
+	fmt.Printf("radar daemon stopped: %v\n", pids)
 }
 
 func restartDaemon() {
@@ -113,7 +113,7 @@ func restartDaemon() {
 	if err := startDetached(cmd, "daemon"); err != nil {
 		fatal(err)
 	}
-	fmt.Println("cockpit daemon restarted")
+	fmt.Println("radar daemon restarted")
 }
 
 func startDetached(name string, args ...string) error {
@@ -189,10 +189,10 @@ func printStatePath() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: cockpit [daemon|stop|restart|status|summary|items|list|refresh|log-path|state-path]")
+	fmt.Fprintln(os.Stderr, "usage: radar [daemon|stop|restart|status|summary|items|list|refresh|log-path|state-path]")
 }
 
 func fatal(err error) {
-	fmt.Fprintln(os.Stderr, "cockpit:", err)
+	fmt.Fprintln(os.Stderr, "radar:", err)
 	os.Exit(1)
 }

@@ -1,4 +1,4 @@
-module cockpit.nvim
+module radar.nvim
 
 go 1.22
 

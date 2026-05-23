@@ -11,15 +11,15 @@ import (
 )
 
 func PIDPath() (string, error) {
-	if explicit := os.Getenv("COCKPIT_PID"); explicit != "" {
+	if explicit := os.Getenv("RADAR_PID"); explicit != "" {
 		return explicit, nil
 	}
 
 	base := os.Getenv("XDG_RUNTIME_DIR")
 	if base == "" {
-		base = filepath.Join(os.TempDir(), "cockpit-"+os.Getenv("USER"))
+		base = filepath.Join(os.TempDir(), "radar-"+os.Getenv("USER"))
 	}
-	return filepath.Join(base, "cockpit", "cockpit.pid"), nil
+	return filepath.Join(base, "radar", "radar.pid"), nil
 }
 
 func WritePID() (string, error) {
@@ -91,18 +91,18 @@ func DaemonPIDs() ([]int, error) {
 		}
 
 		parts := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
-		if isCockpitDaemon(parts) {
+		if isRadarDaemon(parts) {
 			pids = append(pids, pid)
 		}
 	}
 	return pids, nil
 }
 
-func isCockpitDaemon(args []string) bool {
+func isRadarDaemon(args []string) bool {
 	if len(args) < 2 {
 		return false
 	}
-	if filepath.Base(args[0]) != "cockpit" {
+	if filepath.Base(args[0]) != "radar" {
 		return false
 	}
 	for _, arg := range args[1:] {

@@ -7,9 +7,9 @@ import (
 	"net"
 	"os"
 
-	"cockpit.nvim/internal/protocol"
-	"cockpit.nvim/internal/socket"
-	"cockpit.nvim/internal/state"
+	"radar.nvim/internal/protocol"
+	"radar.nvim/internal/socket"
+	"radar.nvim/internal/state"
 )
 
 type Server struct {

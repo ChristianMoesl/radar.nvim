@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"cockpit.nvim/internal/github"
-	"cockpit.nvim/internal/protocol"
+	"radar.nvim/internal/github"
+	"radar.nvim/internal/protocol"
 )
 
 func Collect(ctx context.Context, previous []protocol.Item, logger *slog.Logger) []protocol.Item {

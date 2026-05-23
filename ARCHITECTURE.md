@@ -1,11 +1,11 @@
 # Architecture
 
-`cockpit.nvim` is split into a small Neovim UI plugin and a Go backend daemon.
+`radar.nvim` is split into a small Neovim UI plugin and a Go backend daemon.
 
 ## Components
 
-- `lua/cockpit/`: Neovim integration, statusline component, notifications, and floating detail window.
-- `cmd/cockpit/`: single Go binary with CLI and daemon mode.
+- `lua/radar/`: Neovim integration, statusline component, notifications, and floating detail window.
+- `cmd/radar/`: single Go binary with CLI and daemon mode.
 - `internal/server/`: Unix socket API used by Neovim and CLI commands.
 - `internal/collector/`: orchestrates data collection from external systems.
 - `internal/github/`: GitHub collectors and remote state resolution.
@@ -16,7 +16,7 @@
 There is one long-running daemon per user:
 
 ```text
-Neovim sessions -> cockpit CLI -> Unix socket -> cockpit daemon -> collectors
+Neovim sessions -> radar CLI -> Unix socket -> radar daemon -> collectors
 ```
 
 Multiple Neovim sessions share the same daemon and state. This avoids duplicated polling and keeps statusline reads fast.
@@ -24,17 +24,17 @@ Multiple Neovim sessions share the same daemon and state. This avoids duplicated
 The binary is intentionally single-file from a user perspective:
 
 ```sh
-cockpit daemon
-cockpit status
-cockpit items
-cockpit refresh
-cockpit stop
-cockpit restart
+radar daemon
+radar status
+radar items
+radar refresh
+radar stop
+radar restart
 ```
 
 ## Communication
 
-Neovim does not call GitHub directly. It shells out to `cockpit`, which talks to the daemon over a Unix socket.
+Neovim does not call GitHub directly. It shells out to `radar`, which talks to the daemon over a Unix socket.
 
 The socket protocol is newline-delimited JSON with a tiny request model:
 
@@ -46,7 +46,7 @@ The socket protocol is newline-delimited JSON with a tiny request model:
 
 ## Item lifecycle
 
-Cockpit has three active categories and one historical category:
+Radar has three active categories and one historical category:
 
 - `immediate`
 - `attention`
@@ -55,16 +55,16 @@ Cockpit has three active categories and one historical category:
 
 Collectors ingest only active items. They should not blindly import already-completed remote items.
 
-`done` is derived from previously tracked items. If an item was active in the local store and later disappears from the active collector result, the relevant integration checks the remote state. If the remote item resolved today, Cockpit moves it to `done`.
+`done` is derived from previously tracked items. If an item was active in the local store and later disappears from the active collector result, the relevant integration checks the remote state. If the remote item resolved today, Radar moves it to `done`.
 
-This keeps `done` meaningful: it means “something Cockpit was tracking became resolved today.”
+This keeps `done` meaningful: it means “something Radar was tracking became resolved today.”
 
 ## Local state
 
 The daemon stores the latest known items on disk:
 
 ```text
-$XDG_STATE_HOME/cockpit/items.json
+$XDG_STATE_HOME/radar/items.json
 ```
 
 This allows fast startup and lets Neovim show cached information immediately.
@@ -97,7 +97,7 @@ Manual refresh is available from the floating window with `r`.
 The daemon writes logs to:
 
 ```text
-$XDG_STATE_HOME/cockpit/cockpit.log
+$XDG_STATE_HOME/radar/radar.log
 ```
 
 Default log level is `info`. Routine polling details should stay at `debug` to avoid excessive disk logging.
@@ -105,7 +105,7 @@ Default log level is `info`. Routine polling details should stay at `debug` to a
 Use:
 
 ```sh
-COCKPIT_LOG_LEVEL=debug cockpit daemon
+RADAR_LOG_LEVEL=debug radar daemon
 ```
 
 for development debugging.

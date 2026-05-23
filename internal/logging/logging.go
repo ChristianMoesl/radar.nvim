@@ -12,7 +12,7 @@ import (
 )
 
 func Path() (string, error) {
-	if explicit := os.Getenv("COCKPIT_LOG"); explicit != "" {
+	if explicit := os.Getenv("RADAR_LOG"); explicit != "" {
 		return explicit, nil
 	}
 
@@ -25,7 +25,7 @@ func Path() (string, error) {
 		base = filepath.Join(home, ".local", "state")
 	}
 
-	return filepath.Join(base, "cockpit", "cockpit.log"), nil
+	return filepath.Join(base, "radar", "radar.log"), nil
 }
 
 func New() (*slog.Logger, *os.File, string, error) {
@@ -60,7 +60,7 @@ func NewWithWriter(w io.Writer) *slog.Logger {
 }
 
 func levelFromEnv() slog.Level {
-	switch strings.ToLower(os.Getenv("COCKPIT_LOG_LEVEL")) {
+	switch strings.ToLower(os.Getenv("RADAR_LOG_LEVEL")) {
 	case "debug":
 		return slog.LevelDebug
 	case "warn", "warning":
@@ -73,11 +73,11 @@ func levelFromEnv() slog.Level {
 }
 
 func isDevelopment() bool {
-	env := strings.ToLower(os.Getenv("COCKPIT_ENV"))
+	env := strings.ToLower(os.Getenv("RADAR_ENV"))
 	return env == "" || env == "dev" || env == "development"
 }
 
 func useColor() bool {
-	value := strings.ToLower(os.Getenv("COCKPIT_LOG_COLOR"))
+	value := strings.ToLower(os.Getenv("RADAR_LOG_COLOR"))
 	return value != "0" && value != "false" && value != "no"
 }

@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"cockpit.nvim/internal/protocol"
+	"radar.nvim/internal/protocol"
 )
 
 func Call(socketPath string, method string) (protocol.Response, error) {

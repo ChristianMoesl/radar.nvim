@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"cockpit.nvim/internal/protocol"
+	"radar.nvim/internal/protocol"
 )
 
 type Store struct {
@@ -18,7 +18,7 @@ type Store struct {
 }
 
 func Path() (string, error) {
-	if explicit := os.Getenv("COCKPIT_STATE"); explicit != "" {
+	if explicit := os.Getenv("RADAR_STATE"); explicit != "" {
 		return explicit, nil
 	}
 
@@ -31,7 +31,7 @@ func Path() (string, error) {
 		base = filepath.Join(home, ".local", "state")
 	}
 
-	return filepath.Join(base, "cockpit", "items.json"), nil
+	return filepath.Join(base, "radar", "items.json"), nil
 }
 
 func NewStore(logger *slog.Logger) (*Store, error) {

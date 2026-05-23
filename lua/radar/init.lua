@@ -1,7 +1,7 @@
 local M = {}
 
 local config = {
-	cockpit_cmd = "cockpit",
+	radar_cmd = "radar",
 	auto_start = true,
 	refresh_ms = 30000,
 	width = 90,
@@ -45,11 +45,11 @@ local function start_daemon()
 	if not config.auto_start then
 		return
 	end
-	vim.fn.jobstart({ config.cockpit_cmd, "daemon" }, { detach = true })
+	vim.fn.jobstart({ config.radar_cmd, "daemon" }, { detach = true })
 end
 
 local function restart_daemon()
-	vim.fn.jobstart({ config.cockpit_cmd, "restart" }, {
+	vim.fn.jobstart({ config.radar_cmd, "restart" }, {
 		detach = true,
 		on_exit = vim.schedule_wrap(function()
 			M.load()
@@ -58,7 +58,7 @@ local function restart_daemon()
 end
 
 local function stop_daemon()
-	vim.fn.jobstart({ config.cockpit_cmd, "stop" }, { detach = true })
+	vim.fn.jobstart({ config.radar_cmd, "stop" }, { detach = true })
 end
 
 local function is_open()
@@ -74,7 +74,7 @@ end
 
 local function open_url(url)
 	if not url or url == "" then
-		vim.notify("Cockpit item has no URL", vim.log.levels.WARN)
+		vim.notify("Radar item has no URL", vim.log.levels.WARN)
 		return
 	end
 
@@ -132,7 +132,7 @@ local function notify_new_items(items)
 		vim.notify(
 			string.format("%s %s\n%s", item_icon(item.attention), item.title or "Untitled", item.reason or item_label(item.attention)),
 			notification_level(item),
-			{ title = "New Cockpit item" }
+			{ title = "New Radar item" }
 		)
 	end
 end
@@ -161,7 +161,7 @@ end
 local function render_lines()
 	local s = state.summary
 	local lines = {
-		"Cockpit",
+		"Radar",
 		string.format("%s %d immediate   %s %d attention   %s %d in progress   %s %d done", config.icons.immediate, s.immediate or 0, config.icons.attention, s.attention or 0, config.icons.in_progress, s.in_progress or 0, config.icons.done, s.done or 0),
 		"",
 		"<CR>: open URL    r: refresh    q/<Esc>: close",
@@ -210,7 +210,7 @@ local function render_window()
 	vim.bo[state.buf].buftype = "nofile"
 	vim.bo[state.buf].bufhidden = "wipe"
 	vim.bo[state.buf].swapfile = false
-	vim.bo[state.buf].filetype = "cockpit"
+	vim.bo[state.buf].filetype = "radar"
 end
 
 local function ensure_window()
@@ -229,7 +229,7 @@ local function ensure_window()
 		relative = "editor",
 		style = "minimal",
 		border = "rounded",
-		title = " Cockpit ",
+		title = " Radar ",
 		title_pos = "center",
 		width = width,
 		height = height,
@@ -265,7 +265,7 @@ local function refresh_statusline()
 end
 
 local function fetch(method, cb, retried)
-	run({ config.cockpit_cmd, method }, function(result)
+	run({ config.radar_cmd, method }, function(result)
 		if result.code ~= 0 then
 			start_daemon()
 			if not retried then
@@ -326,13 +326,13 @@ end
 function M.setup(opts)
 	config = vim.tbl_deep_extend("force", config, opts or {})
 
-	vim.api.nvim_create_user_command("Cockpit", M.open, {})
-	vim.api.nvim_create_user_command("CockpitRefresh", function()
+	vim.api.nvim_create_user_command("Radar", M.open, {})
+	vim.api.nvim_create_user_command("RadarRefresh", function()
 		M.refresh()
 	end, {})
-	vim.api.nvim_create_user_command("CockpitStart", start_daemon, {})
-	vim.api.nvim_create_user_command("CockpitStop", stop_daemon, {})
-	vim.api.nvim_create_user_command("CockpitRestart", restart_daemon, {})
+	vim.api.nvim_create_user_command("RadarStart", start_daemon, {})
+	vim.api.nvim_create_user_command("RadarStop", stop_daemon, {})
+	vim.api.nvim_create_user_command("RadarRestart", restart_daemon, {})
 
 	M.load()
 

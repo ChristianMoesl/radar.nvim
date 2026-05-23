@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"cockpit.nvim/internal/protocol"
+	"radar.nvim/internal/protocol"
 )
 
 type notification struct {
