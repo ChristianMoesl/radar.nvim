@@ -68,7 +68,8 @@ func (s *Server) handle(conn net.Conn) {
 			summary := s.store.Summary()
 			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary})
 		case "items":
-			_ = encoder.Encode(protocol.Response{OK: true, Items: s.store.Items()})
+			summary := s.store.Summary()
+			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Items: s.store.Items()})
 		case "refresh":
 			if s.refresh != nil {
 				s.refresh()

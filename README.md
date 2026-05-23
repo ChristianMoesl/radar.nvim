@@ -55,6 +55,13 @@ Query it from the CLI:
 ./cockpit refresh
 ```
 
+Stop or restart the daemon:
+
+```sh
+./cockpit stop
+./cockpit restart
+```
+
 ## GitHub
 
 GitHub integration currently uses the GitHub CLI. Make sure this works first:
@@ -98,7 +105,17 @@ tail -f "$(./cockpit log-path)"
 
 Override the log path with `COCKPIT_LOG=/path/to/cockpit.log`.
 
-Development logs use a pretty human-readable colored format with source locations by default. Set `COCKPIT_ENV=production` to disable source locations. Set `COCKPIT_LOG_COLOR=0` to disable colored logs.
+Development logs use a pretty human-readable colored format with source locations by default. Routine refresh details are hidden unless debug logging is enabled.
+
+Set log level with:
+
+```sh
+COCKPIT_LOG_LEVEL=debug ./cockpit daemon
+```
+
+Supported levels: `debug`, `info`, `warn`, `error`. Default is `info`.
+
+Set `COCKPIT_ENV=production` to disable source locations. Set `COCKPIT_LOG_COLOR=0` to disable colored logs.
 
 ## Neovim setup
 

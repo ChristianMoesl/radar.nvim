@@ -46,7 +46,7 @@ func New() (*slog.Logger, *os.File, string, error) {
 }
 
 func NewWithWriter(w io.Writer) *slog.Logger {
-	level := slog.LevelDebug
+	level := levelFromEnv()
 	addSource := isDevelopment()
 
 	handler := tint.NewHandler(w, &tint.Options{
@@ -57,6 +57,19 @@ func NewWithWriter(w io.Writer) *slog.Logger {
 	})
 
 	return slog.New(handler)
+}
+
+func levelFromEnv() slog.Level {
+	switch strings.ToLower(os.Getenv("COCKPIT_LOG_LEVEL")) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 func isDevelopment() bool {

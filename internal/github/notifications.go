@@ -58,7 +58,7 @@ func FetchReviewRequests(ctx context.Context, logger *slog.Logger) ([]protocol.I
 	if err != nil {
 		return nil, fmt.Errorf("fetch github notifications: %w", err)
 	}
-	logger.Info("fetched github notifications", "count", len(notifications))
+	logger.Debug("fetched github notifications", "count", len(notifications))
 
 	items := make([]protocol.Item, 0)
 	for _, notification := range notifications {
@@ -86,7 +86,7 @@ func FetchReviewRequests(ctx context.Context, logger *slog.Logger) ([]protocol.I
 		})
 	}
 
-	logger.Info("github review requests classified", "count", len(items))
+	logger.Debug("github review requests classified", "count", len(items))
 	return items, nil
 }
 
@@ -95,7 +95,7 @@ func FetchAuthoredPullRequests(ctx context.Context, logger *slog.Logger) ([]prot
 	if err != nil {
 		return nil, fmt.Errorf("fetch authored pull requests: %w", err)
 	}
-	logger.Info("fetched authored github pull requests", "count", len(prs))
+	logger.Debug("fetched authored github pull requests", "count", len(prs))
 
 	items := make([]protocol.Item, 0, len(prs))
 	for _, pr := range prs {
@@ -120,7 +120,7 @@ func FetchAuthoredPullRequests(ctx context.Context, logger *slog.Logger) ([]prot
 		})
 	}
 
-	logger.Info("authored github pull requests classified", "count", len(items))
+	logger.Debug("authored github pull requests classified", "count", len(items))
 	return items, nil
 }
 
