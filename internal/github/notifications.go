@@ -35,6 +35,18 @@ type pullRequest struct {
 	RequestedReviewers []user `json:"requested_reviewers"`
 }
 
+type searchPullRequest struct {
+	Number     int    `json:"number"`
+	Title      string `json:"title"`
+	URL        string `json:"url"`
+	State      string `json:"state"`
+	Draft      bool   `json:"isDraft"`
+	Repository struct {
+		FullName      string `json:"fullName"`
+		NameWithOwner string `json:"nameWithOwner"`
+	} `json:"repository"`
+}
+
 func FetchReviewRequests(ctx context.Context, logger *slog.Logger) ([]protocol.Item, error) {
 	login, err := currentLogin(ctx)
 	if err != nil {
@@ -78,6 +90,40 @@ func FetchReviewRequests(ctx context.Context, logger *slog.Logger) ([]protocol.I
 	return items, nil
 }
 
+func FetchAuthoredPullRequests(ctx context.Context, logger *slog.Logger) ([]protocol.Item, error) {
+	prs, err := fetchAuthoredPullRequests(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fetch authored pull requests: %w", err)
+	}
+	logger.Info("fetched authored github pull requests", "count", len(prs))
+
+	items := make([]protocol.Item, 0, len(prs))
+	for _, pr := range prs {
+		repo := pr.Repository.FullName
+		if repo == "" {
+			repo = pr.Repository.NameWithOwner
+		}
+
+		reason := "open PR"
+		if pr.Draft {
+			reason = "draft PR"
+		}
+
+		items = append(items, protocol.Item{
+			ID:        fmt.Sprintf("github:own_pr:%s:%d", repo, pr.Number),
+			Kind:      "github_own_pr",
+			Title:     pr.Title,
+			Repo:      repo,
+			URL:       pr.URL,
+			Attention: "in_progress",
+			Reason:    reason,
+		})
+	}
+
+	logger.Info("authored github pull requests classified", "count", len(items))
+	return items, nil
+}
+
 func currentLogin(ctx context.Context) (string, error) {
 	var u user
 	if err := ghJSON(ctx, []string{"api", "user"}, &u); err != nil {
@@ -92,6 +138,21 @@ func fetchNotifications(ctx context.Context) ([]notification, error) {
 		return nil, err
 	}
 	return notifications, nil
+}
+
+func fetchAuthoredPullRequests(ctx context.Context) ([]searchPullRequest, error) {
+	var prs []searchPullRequest
+	args := []string{
+		"search", "prs",
+		"--author", "@me",
+		"--state", "open",
+		"--limit", "100",
+		"--json", "number,title,url,repository,isDraft,state",
+	}
+	if err := ghJSON(ctx, args, &prs); err != nil {
+		return nil, err
+	}
+	return prs, nil
 }
 
 func fetchPullRequest(ctx context.Context, apiURL string) (pullRequest, error) {

@@ -31,7 +31,7 @@ Neovim statusline -> cockpit.nvim -> Unix socket -> cockpit daemon -> GitHub/Jir
 
 ## Current status
 
-This is early scaffolding. The daemon currently fetches GitHub notifications via the `gh` CLI and turns pull request review requests assigned to you into `needs attention` items. Jira/Pi integrations will be added later.
+This is early scaffolding. The daemon currently uses the `gh` CLI to fetch GitHub review request notifications and open pull requests authored by you. Jira/Pi integrations will be added later.
 
 ## Build
 
@@ -63,7 +63,10 @@ GitHub integration currently uses the GitHub CLI. Make sure this works first:
 gh auth status
 ```
 
-The daemon fetches notifications and filters pull request notifications where your user is in `requested_reviewers`.
+The daemon currently tracks:
+
+- PR review requests assigned directly to you as `needs attention`
+- open PRs authored by you as `in progress`
 
 ## Local state
 
