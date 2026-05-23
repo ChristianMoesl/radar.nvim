@@ -134,6 +134,8 @@ func (s *Store) Summary() protocol.Summary {
 			summary.Attention++
 		case "in_progress":
 			summary.InProgress++
+		case "done":
+			summary.Done++
 		}
 	}
 	return summary

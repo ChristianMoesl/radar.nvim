@@ -1,0 +1,198 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"time"
+
+	"cockpit.nvim/internal/client"
+	"cockpit.nvim/internal/collector"
+	"cockpit.nvim/internal/logging"
+	"cockpit.nvim/internal/process"
+	"cockpit.nvim/internal/server"
+	"cockpit.nvim/internal/socket"
+	"cockpit.nvim/internal/state"
+)
+
+func main() {
+	command := "status"
+	if len(os.Args) > 1 {
+		command = os.Args[1]
+	}
+
+	switch command {
+	case "daemon":
+		runDaemon()
+	case "stop":
+		stopDaemon()
+	case "restart":
+		restartDaemon()
+	case "summary", "status":
+		callDaemon("summary")
+	case "items", "list":
+		callDaemon("items")
+	case "refresh":
+		callDaemon("refresh")
+	case "log-path", "logs":
+		printLogPath()
+	case "state-path":
+		printStatePath()
+	case "help", "-h", "--help":
+		usage()
+	default:
+		usage()
+		os.Exit(2)
+	}
+}
+
+func runDaemon() {
+	if pids, err := process.DaemonPIDs(); err == nil && len(pids) > 0 {
+		fmt.Fprintf(os.Stderr, "cockpit daemon already running: %v\n", pids)
+		return
+	}
+
+	logger, file, logPath, err := logging.New()
+	if err != nil {
+		fatal(err)
+	}
+	defer file.Close()
+
+	path, err := socket.Path()
+	if err != nil {
+		logger.Error("could not determine socket path", "error", err)
+		fatal(err)
+	}
+
+	fmt.Fprintf(os.Stderr, "cockpit daemon listening on %s\n", path)
+	fmt.Fprintf(os.Stderr, "cockpit daemon logging to %s\n", logPath)
+	pidPath, err := process.WritePID()
+	if err != nil {
+		logger.Error("could not write pid file", "error", err)
+		fatal(err)
+	}
+	defer os.Remove(pidPath)
+
+	logger.Info("daemon starting", "socket", path, "log", logPath, "pid", os.Getpid(), "pid_file", pidPath)
+
+	store, err := state.NewStore(logger)
+	if err != nil {
+		logger.Error("could not initialize state", "error", err)
+		fatal(err)
+	}
+	refresh := refresher(context.Background(), store, logger)
+	go refreshLoop(context.Background(), refresh)
+
+	if err := server.New(store, logger, refresh).ListenAndServe(path); err != nil {
+		logger.Error("daemon stopped", "error", err)
+		fatal(err)
+	}
+}
+
+func stopDaemon() {
+	pids, _ := process.DaemonPIDs()
+	if err := process.Stop(); err != nil {
+		fatal(err)
+	}
+	if len(pids) == 0 {
+		fmt.Println("cockpit daemon was not running")
+		return
+	}
+	fmt.Printf("cockpit daemon stopped: %v\n", pids)
+}
+
+func restartDaemon() {
+	_ = process.Stop()
+	cmd, err := os.Executable()
+	if err != nil {
+		fatal(err)
+	}
+	if err := startDetached(cmd, "daemon"); err != nil {
+		fatal(err)
+	}
+	fmt.Println("cockpit daemon restarted")
+}
+
+func startDetached(name string, args ...string) error {
+	process, err := os.StartProcess(name, append([]string{name}, args...), &os.ProcAttr{
+		Files: []*os.File{nil, os.Stderr, os.Stderr},
+	})
+	if err != nil {
+		return err
+	}
+	return process.Release()
+}
+
+func refresher(ctx context.Context, store *state.Store, logger *slog.Logger) func() {
+	return func() {
+		logger.Debug("refresh started")
+		previous := store.Items()
+		items := collector.Collect(ctx, previous, logger)
+		store.SetItems(items)
+		logger.Debug("refresh finished", "items", len(items))
+	}
+}
+
+func refreshLoop(ctx context.Context, refresh func()) {
+	refresh()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
+		}
+	}
+}
+
+func callDaemon(method string) {
+	path, err := socket.Path()
+	if err != nil {
+		fatal(err)
+	}
+
+	res, err := client.Call(path, method)
+	if err != nil {
+		fatal(err)
+	}
+	if !res.OK {
+		fatal(errors.New(res.Error))
+	}
+
+	out, err := json.Marshal(res)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Println(string(out))
+}
+
+func printLogPath() {
+	path, err := logging.Path()
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Println(path)
+}
+
+func printStatePath() {
+	path, err := state.Path()
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Println(path)
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage: cockpit [daemon|stop|restart|status|summary|items|list|refresh|log-path|state-path]")
+}
+
+func fatal(err error) {
+	fmt.Fprintln(os.Stderr, "cockpit:", err)
+	os.Exit(1)
+}

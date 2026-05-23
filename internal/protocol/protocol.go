@@ -10,6 +10,7 @@ type Summary struct {
 	Immediate  int `json:"immediate"`
 	Attention  int `json:"attention"`
 	InProgress int `json:"in_progress"`
+	Done       int `json:"done"`
 }
 
 type Item struct {
@@ -20,6 +21,7 @@ type Item struct {
 	URL       string `json:"url,omitempty"`
 	Attention string `json:"attention"`
 	Reason    string `json:"reason"`
+	DoneAt    string `json:"done_at,omitempty"`
 }
 
 type Response struct {

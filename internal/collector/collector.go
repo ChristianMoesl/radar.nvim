@@ -8,7 +8,7 @@ import (
 	"cockpit.nvim/internal/protocol"
 )
 
-func Collect(ctx context.Context, logger *slog.Logger) []protocol.Item {
+func Collect(ctx context.Context, previous []protocol.Item, logger *slog.Logger) []protocol.Item {
 	items := make([]protocol.Item, 0)
 
 	reviewItems, err := github.FetchReviewRequests(ctx, logger)
@@ -24,6 +24,8 @@ func Collect(ctx context.Context, logger *slog.Logger) []protocol.Item {
 	} else {
 		items = append(items, authoredItems...)
 	}
+
+	items = append(items, github.ResolveDonePullRequests(ctx, previous, items, logger)...)
 
 	return items
 }
