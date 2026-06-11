@@ -66,16 +66,16 @@ func (s *Server) handle(conn net.Conn) {
 		switch req.Method {
 		case "summary":
 			summary := s.store.Summary()
-			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary})
+			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Services: s.store.Services()})
 		case "items":
 			summary := s.store.Summary()
-			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Items: s.store.Items()})
+			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Items: s.store.Items(), Services: s.store.Services()})
 		case "refresh":
 			if s.refresh != nil {
 				s.refresh()
 			}
 			summary := s.store.Summary()
-			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Items: s.store.Items()})
+			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Items: s.store.Items(), Services: s.store.Services()})
 		default:
 			s.logger.Warn("unknown method", "method", req.Method)
 			_ = encoder.Encode(protocol.Response{OK: false, Error: "unknown method: " + req.Method})

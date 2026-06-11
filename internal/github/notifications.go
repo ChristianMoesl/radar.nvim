@@ -179,6 +179,10 @@ func authoredPullRequestItems(prs []searchPullRequest) []protocol.Item {
 	return items
 }
 
+func PullRequestCollectionSummary(reviewCount int, authoredCount int) string {
+	return fmt.Sprintf("%d review requests, %d authored PRs", reviewCount, authoredCount)
+}
+
 func repoName(pr searchPullRequest) string {
 	if pr.Repository.FullName != "" {
 		return pr.Repository.FullName

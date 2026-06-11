@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"radar.nvim/internal/protocol"
 )
 
 const minSearchRemaining = 2
@@ -68,22 +70,51 @@ func EnsureCoreBudget(ctx context.Context, logger *slog.Logger) bool {
 }
 
 func EnsureGraphQLBudget(ctx context.Context, logger *slog.Logger) bool {
-	if pausedUntil("graphql", logger) {
-		return false
+	_, allowed := GraphQLServiceStatus(ctx, logger)
+	return allowed
+}
+
+func GraphQLServiceStatus(ctx context.Context, logger *slog.Logger) (protocol.ServiceStatus, bool) {
+	status := protocol.ServiceStatus{Name: "github", Status: "ok"}
+
+	if until, ok := pausedUntilTime("graphql"); ok {
+		logger.Debug("github collection paused until rate limit reset", "resource", "graphql", "reset", until.Format(time.RFC3339))
+		status.Status = "paused"
+		status.Detail = fmt.Sprintf("rate limited until %s", until.Format(time.RFC3339))
+		return status, false
 	}
+
 	limits, err := rateLimits(ctx, logger)
 	if err != nil {
 		logger.Warn("could not fetch github rate limits; skipping github collection to be safe", "error", err)
-		return false
+		status.Status = "error"
+		status.Detail = err.Error()
+		return status, false
 	}
 	if !hasBudget("graphql", limits.Resources.GraphQL, minGraphQLRemaining, logger) {
-		return false
+		until, _ := pausedUntilTime("graphql")
+		status.Status = "paused"
+		status.Detail = fmt.Sprintf("rate limited until %s", until.Format(time.RFC3339))
+		return status, false
 	}
+
 	reserve("graphql", 10)
-	return true
+	remaining := max(0, limits.Resources.GraphQL.Remaining-10)
+	status.Detail = fmt.Sprintf("graphql %d/%d remaining", remaining, limits.Resources.GraphQL.Limit)
+	return status, true
 }
 
 func pausedUntil(name string, logger *slog.Logger) bool {
+	until, ok := pausedUntilTime(name)
+	if !ok {
+		return false
+	}
+
+	logger.Debug("github collection paused until rate limit reset", "resource", name, "reset", until.Format(time.RFC3339))
+	return true
+}
+
+func pausedUntilTime(name string) (time.Time, bool) {
 	rateState.mu.Lock()
 	defer rateState.mu.Unlock()
 
@@ -97,11 +128,9 @@ func pausedUntil(name string, logger *slog.Logger) bool {
 		until = rateState.graphqlUntil
 	}
 	if until.IsZero() || time.Now().After(until) {
-		return false
+		return time.Time{}, false
 	}
-
-	logger.Debug("github collection paused until rate limit reset", "resource", name, "reset", until.Format(time.RFC3339))
-	return true
+	return until, true
 }
 
 func rateLimits(ctx context.Context, logger *slog.Logger) (rateLimitResponse, error) {

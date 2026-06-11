@@ -4,9 +4,11 @@ local config = {
 	radar_cmd = "radar",
 	auto_start = true,
 	refresh_ms = 30000,
-	width = 90,
+	width = 140,
 	height = 24,
 	notify_new_items = true,
+	prefer_local_radar_binary = true,
+	auto_reload_binary = true,
 	icons = {
 		immediate = "🚨",
 		attention = "👀",
@@ -18,13 +20,19 @@ local config = {
 local state = {
 	summary = { immediate = 0, attention = 0, in_progress = 0, done = 0 },
 	items = {},
+	services = {},
 	timer = nil,
 	buf = nil,
 	win = nil,
 	line_items = {},
+	line_highlights = {},
 	seen_items = {},
 	seen_items_initialized = false,
+	radar_binary_path = nil,
+	radar_binary_mtime = nil,
 }
+
+local ns = vim.api.nvim_create_namespace("radar")
 
 local function decode_json(text)
 	local ok, decoded = pcall(vim.json.decode, text)
@@ -41,24 +49,61 @@ local function run(args, cb)
 	end)
 end
 
+local function plugin_root()
+	local source = debug.getinfo(1, "S").source:gsub("^@", "")
+	return vim.fn.fnamemodify(source, ":p:h:h:h")
+end
+
+local function executable(path)
+	return path and vim.fn.executable(path) == 1
+end
+
+local function resolve_radar_cmd()
+	if config.prefer_local_radar_binary and config.radar_cmd == "radar" then
+		local local_binary = plugin_root() .. "/radar"
+		if executable(local_binary) then
+			return local_binary
+		end
+	end
+	return config.radar_cmd
+end
+
+local function binary_mtime(path)
+	local stat = (vim.uv or vim.loop).fs_stat(path)
+	if stat then
+		return stat.mtime.sec
+	end
+end
+
+local function track_radar_binary()
+	local cmd = resolve_radar_cmd()
+	state.radar_binary_path = executable(cmd) and cmd or vim.fn.exepath(cmd)
+	state.radar_binary_mtime = binary_mtime(state.radar_binary_path)
+end
+
 local function start_daemon()
 	if not config.auto_start then
 		return
 	end
-	vim.fn.jobstart({ config.radar_cmd, "daemon" }, { detach = true })
+	vim.fn.jobstart({ resolve_radar_cmd(), "daemon" }, { detach = true })
 end
 
-local function restart_daemon()
-	vim.fn.jobstart({ config.radar_cmd, "restart" }, {
+local function restart_daemon(cb)
+	vim.fn.jobstart({ resolve_radar_cmd(), "restart" }, {
 		detach = true,
 		on_exit = vim.schedule_wrap(function()
-			M.load()
+			track_radar_binary()
+			if cb then
+				cb()
+			else
+				M.load()
+			end
 		end),
 	})
 end
 
 local function stop_daemon()
-	vim.fn.jobstart({ config.radar_cmd, "stop" }, { detach = true })
+	vim.fn.jobstart({ resolve_radar_cmd(), "stop" }, { detach = true })
 end
 
 local function is_open()
@@ -74,7 +119,7 @@ end
 
 local function open_url(url)
 	if not url or url == "" then
-		vim.notify("Radar item has no URL", vim.log.levels.WARN)
+		vim.notify("Radar line has no URL", vim.log.levels.WARN)
 		return
 	end
 
@@ -96,6 +141,15 @@ local function item_label(attention)
 		in_progress = "In progress",
 		done = "Done today",
 	})[attention] or attention or "Unknown"
+end
+
+local function item_status(attention)
+	return ({
+		immediate = "urgent",
+		attention = "attention",
+		in_progress = "progress",
+		done = "done",
+	})[attention] or attention or "unknown"
 end
 
 local function item_id(item)
@@ -137,56 +191,98 @@ local function notify_new_items(items)
 	end
 end
 
-local function add_item(lines, line_items, item)
-	table.insert(lines, string.format("%s %s", item_icon(item.attention), item.title or "Untitled"))
+local function append_field(fields, label, value)
+	if value and value ~= "" then
+		table.insert(fields, string.format("%s=%s", label, value))
+	end
+end
+
+local function entity_identifier(entity)
+	return entity.id or entity.title or entity.repo or entity.path or entity.branch or "unknown"
+end
+
+local function add_highlight(line_highlights, line, start_col, end_col, group)
+	table.insert(line_highlights, {
+		line = line,
+		start_col = start_col,
+		end_col = end_col,
+		group = group,
+	})
+end
+
+local function service_status_hl(status)
+	return ({
+		ok = "RadarServiceStatusOK",
+		paused = "RadarServiceStatusWarn",
+		error = "RadarServiceStatusError",
+		disabled = "RadarServiceStatusDisabled",
+	})[status] or "RadarServiceStatusDisabled"
+end
+
+local function add_service(lines, line_highlights, service)
+	local name = service.name or "unknown"
+	local status = service.status or "unknown"
+	local detail = service.detail or ""
+	local prefix = string.format("  %-8s ", name)
+	local status_text = string.format("%-8s", status)
+	local line = prefix .. status_text
+	if detail ~= "" then
+		line = line .. "  " .. detail
+	end
+
+	table.insert(lines, line)
+	add_highlight(line_highlights, #lines, 2, 2 + #name, "RadarServiceName")
+	add_highlight(line_highlights, #lines, #prefix, #prefix + #status, service_status_hl(status))
+end
+
+local function add_item(lines, line_items, line_highlights, item)
+	local fields = {}
+	append_field(fields, "repo", item.repo)
+	append_field(fields, "reason", item.reason)
+	append_field(fields, "kind", item.kind)
+	append_field(fields, "id", item.id)
+	append_field(fields, "done", item.done_at)
+
+	local prefix = string.format("%s %-9s ", item_icon(item.attention), item_status(item.attention))
+	local title = item.title or "Untitled"
+	local line = prefix .. title
+	if #fields > 0 then
+		line = line .. "  " .. table.concat(fields, "  ")
+	end
+
+	table.insert(lines, line)
 	line_items[#lines] = item
-	table.insert(lines, string.format("   Status : %s", item_label(item.attention)))
-	table.insert(lines, string.format("   Reason : %s", item.reason or "—"))
-	table.insert(lines, string.format("   Kind   : %s", item.kind or "—"))
-	if item.repo and item.repo ~= "" then
-		table.insert(lines, string.format("   Repo   : %s", item.repo))
-	end
-	if item.url and item.url ~= "" then
-		table.insert(lines, string.format("   URL    : %s", item.url))
-	end
-	if item.done_at and item.done_at ~= "" then
-		table.insert(lines, string.format("   Done   : %s", item.done_at))
-	end
-	if item.id and item.id ~= "" then
-		table.insert(lines, string.format("   ID     : %s", item.id))
-	end
-	if item.entities and #item.entities > 0 then
-		table.insert(lines, "   Entities:")
-		for _, entity in ipairs(item.entities) do
-			local label = string.format("     - %s/%s", entity.source or "?", entity.kind or "?")
-			if entity.status and entity.status ~= "" then
-				label = label .. string.format(" [%s]", entity.status)
-			end
-			table.insert(lines, label)
-			if entity.branch and entity.branch ~= "" then
-				table.insert(lines, string.format("       branch: %s", entity.branch))
-			end
-			if entity.path and entity.path ~= "" then
-				table.insert(lines, string.format("       path: %s", entity.path))
-			end
-			if entity.url and entity.url ~= "" then
-				table.insert(lines, string.format("       url: %s", entity.url))
-			end
+	add_highlight(line_highlights, #lines, #prefix, #prefix + #title, "RadarItemTitle")
+
+	for _, entity in ipairs(item.entities or {}) do
+		local entity_fields = {}
+		append_field(entity_fields, "repo", entity.repo)
+		append_field(entity_fields, "status", entity.status)
+		append_field(entity_fields, "branch", entity.branch)
+		append_field(entity_fields, "path", entity.path)
+		append_field(entity_fields, "title", entity.title)
+
+		local entity_prefix = string.format("  ↳ %s/%s ", entity.source or "?", entity.kind or "?")
+		local identifier = entity_identifier(entity)
+		local entity_line = entity_prefix .. identifier
+		if #entity_fields > 0 then
+			entity_line = entity_line .. "  " .. table.concat(entity_fields, "  ")
 		end
+
+		table.insert(lines, entity_line)
+		line_items[#lines] = entity
+		add_highlight(line_highlights, #lines, #entity_prefix, #entity_prefix + #identifier, "RadarEntityIdentifier")
 	end
-	table.insert(lines, "")
 end
 
 local function render_lines()
 	local s = state.summary
 	local lines = {
-		"Radar",
-		string.format("%s %d immediate   %s %d attention   %s %d in progress   %s %d done", config.icons.immediate, s.immediate or 0, config.icons.attention, s.attention or 0, config.icons.in_progress, s.in_progress or 0, config.icons.done, s.done or 0),
-		"",
-		"<CR>: open URL    r: refresh    q/<Esc>: close",
+		string.format("Radar  %s %d urgent  %s %d attention  %s %d progress  %s %d done    <CR>: open  r: refresh  q: close", config.icons.immediate, s.immediate or 0, config.icons.attention, s.attention or 0, config.icons.in_progress, s.in_progress or 0, config.icons.done, s.done or 0),
 		"",
 	}
 	local line_items = {}
+	local line_highlights = {}
 	local groups = {
 		{ key = "immediate", title = "Need immediate attention" },
 		{ key = "attention", title = "Need attention" },
@@ -203,7 +299,7 @@ local function render_lines()
 					table.insert(lines, string.rep("─", #group.title))
 					added = true
 				end
-				add_item(lines, line_items, item)
+				add_item(lines, line_items, line_highlights, item)
 			end
 		end
 	end
@@ -212,7 +308,23 @@ local function render_lines()
 		table.insert(lines, "No items need your attention.")
 	end
 
-	return lines, line_items
+	if #state.services > 0 then
+		table.insert(lines, "")
+		local title = "Ingestion services"
+		table.insert(lines, title)
+		table.insert(lines, string.rep("─", #title))
+		for _, service in ipairs(state.services) do
+			add_service(lines, line_highlights, service)
+		end
+	end
+
+	return lines, line_items, line_highlights
+end
+
+local function sanitize_line(line)
+	line = tostring(line or "")
+	line = line:gsub("\r\n", " "):gsub("[\r\n]", " ")
+	return line
 end
 
 local function render_window()
@@ -220,11 +332,19 @@ local function render_window()
 		state.buf = vim.api.nvim_create_buf(false, true)
 	end
 
-	local lines, line_items = render_lines()
+	local lines, line_items, line_highlights = render_lines()
+	for i, line in ipairs(lines) do
+		lines[i] = sanitize_line(line)
+	end
 	state.line_items = line_items
+	state.line_highlights = line_highlights
 
 	vim.bo[state.buf].modifiable = true
 	vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
+	vim.api.nvim_buf_clear_namespace(state.buf, ns, 0, -1)
+	for _, highlight in ipairs(line_highlights) do
+		vim.api.nvim_buf_add_highlight(state.buf, ns, highlight.group, highlight.line - 1, highlight.start_col, highlight.end_col)
+	end
 	vim.bo[state.buf].modifiable = false
 	vim.bo[state.buf].buftype = "nofile"
 	vim.bo[state.buf].bufhidden = "wipe"
@@ -283,8 +403,28 @@ local function refresh_statusline()
 	end
 end
 
+local function setup_highlights()
+	vim.api.nvim_set_hl(0, "RadarItemTitle", { link = "Title", default = true })
+	vim.api.nvim_set_hl(0, "RadarEntityIdentifier", { link = "Identifier", default = true })
+	vim.api.nvim_set_hl(0, "RadarServiceName", { link = "Type", default = true })
+	vim.api.nvim_set_hl(0, "RadarServiceStatusOK", { link = "String", default = true })
+	vim.api.nvim_set_hl(0, "RadarServiceStatusWarn", { link = "WarningMsg", default = true })
+	vim.api.nvim_set_hl(0, "RadarServiceStatusError", { link = "ErrorMsg", default = true })
+	vim.api.nvim_set_hl(0, "RadarServiceStatusDisabled", { link = "Comment", default = true })
+end
+
 local function fetch(method, cb, retried)
-	run({ config.radar_cmd, method }, function(result)
+	if config.auto_reload_binary and state.radar_binary_path then
+		local current_mtime = binary_mtime(state.radar_binary_path)
+		if current_mtime and state.radar_binary_mtime and current_mtime ~= state.radar_binary_mtime then
+			restart_daemon(function()
+				fetch(method, cb, true)
+			end)
+			return
+		end
+	end
+
+	run({ resolve_radar_cmd(), method }, function(result)
 		if result.code ~= 0 then
 			start_daemon()
 			if not retried then
@@ -311,6 +451,9 @@ local function fetch(method, cb, retried)
 		if response.items then
 			notify_new_items(response.items)
 			state.items = response.items
+		end
+		if response.services then
+			state.services = response.services
 		end
 		refresh_statusline()
 		if is_open() then
@@ -344,6 +487,7 @@ end
 
 function M.setup(opts)
 	config = vim.tbl_deep_extend("force", config, opts or {})
+	setup_highlights()
 
 	vim.api.nvim_create_user_command("Radar", M.open, {})
 	vim.api.nvim_create_user_command("RadarRefresh", function()
@@ -351,8 +495,11 @@ function M.setup(opts)
 	end, {})
 	vim.api.nvim_create_user_command("RadarStart", start_daemon, {})
 	vim.api.nvim_create_user_command("RadarStop", stop_daemon, {})
-	vim.api.nvim_create_user_command("RadarRestart", restart_daemon, {})
+	vim.api.nvim_create_user_command("RadarRestart", function()
+		restart_daemon()
+	end, {})
 
+	track_radar_binary()
 	M.load()
 
 	state.timer = vim.loop.new_timer()

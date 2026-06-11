@@ -17,17 +17,28 @@ import (
 
 var ticketPattern = regexp.MustCompile(`[A-Z][A-Z0-9]+-[0-9]+`)
 
-func FetchWorktrees(ctx context.Context, logger *slog.Logger) []protocol.Entity {
+func FetchWorktrees(ctx context.Context, logger *slog.Logger) ([]protocol.Entity, protocol.ServiceStatus) {
 	roots := gitRoots()
 	entities := make([]protocol.Entity, 0)
 	seen := map[string]bool{}
+	status := protocol.ServiceStatus{Name: "git", Status: "ok"}
+	collectedRoots := 0
+	failedRoots := 0
+
+	if len(roots) == 0 {
+		status.Status = "disabled"
+		status.Detail = "no git roots configured"
+		return entities, status
+	}
 
 	for _, root := range roots {
 		worktrees, err := worktrees(ctx, root)
 		if err != nil {
+			failedRoots++
 			logger.Debug("git worktree collection skipped", "root", root, "error", err)
 			continue
 		}
+		collectedRoots++
 		for _, wt := range worktrees {
 			if seen[wt.Path] {
 				continue
@@ -38,7 +49,17 @@ func FetchWorktrees(ctx context.Context, logger *slog.Logger) []protocol.Entity 
 	}
 
 	logger.Debug("collected git worktrees", "count", len(entities))
-	return entities
+	if collectedRoots == 0 {
+		status.Status = "error"
+		status.Detail = "could not inspect any configured git roots"
+		return entities, status
+	}
+
+	status.Detail = fmt.Sprintf("%d worktrees from %d roots", len(entities), collectedRoots)
+	if failedRoots > 0 {
+		status.Detail = fmt.Sprintf("%s, %d skipped", status.Detail, failedRoots)
+	}
+	return entities, status
 }
 
 func gitRoots() []string {

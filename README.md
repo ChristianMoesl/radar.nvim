@@ -87,6 +87,8 @@ Configure credentials through the environment:
 RADAR_JIRA_BASE_URL="https://your-site.atlassian.net"
 RADAR_JIRA_EMAIL="you@example.com"
 RADAR_JIRA_API_TOKEN="..."
+RADAR_JIRA_CLOUD_ID="..."
+# alternatively: RADAR_JIRA_API_BASE_URL="https://api.atlassian.com/ex/jira/<cloud-id>/rest/api/3"
 ```
 
 The current JQL is:

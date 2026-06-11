@@ -95,6 +95,8 @@ Jira integration uses the Jira Cloud REST API directly. Credentials are read fro
 RADAR_JIRA_BASE_URL=https://your-site.atlassian.net
 RADAR_JIRA_EMAIL=you@example.com
 RADAR_JIRA_API_TOKEN=...
+RADAR_JIRA_CLOUD_ID=...
+# alternatively: RADAR_JIRA_API_BASE_URL=https://api.atlassian.com/ex/jira/<cloud-id>/rest/api/3
 ```
 
 The Jira collector emits issue entities for assigned non-done tickets. These entities are linked to GitHub PRs and Git worktrees by matching ticket keys such as `ABC-123`.

@@ -146,9 +146,10 @@ func refresher(ctx context.Context, store *state.Store, logger *slog.Logger) fun
 
 		logger.Debug("refresh started")
 		previous := store.Items()
-		items := collector.Collect(ctx, previous, logger)
-		store.SetItems(items)
-		logger.Debug("refresh finished", "items", len(items))
+		result := collector.Collect(ctx, previous, logger)
+		store.SetItems(result.Items)
+		store.SetServices(result.Services)
+		logger.Debug("refresh finished", "items", len(result.Items), "services", len(result.Services))
 	}
 }
 

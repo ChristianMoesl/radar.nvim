@@ -14,43 +14,57 @@ import (
 type Ingested struct {
 	Items                  []protocol.Item
 	Entities               []protocol.Entity
+	Services               []protocol.ServiceStatus
 	GitHubAuthoredComplete bool
 }
 
-func Collect(ctx context.Context, previous []protocol.Item, logger *slog.Logger) []protocol.Item {
+type Result struct {
+	Items    []protocol.Item
+	Services []protocol.ServiceStatus
+}
+
+func Collect(ctx context.Context, previous []protocol.Item, logger *slog.Logger) Result {
 	ingested := Ingest(ctx, logger)
 	items := linker.Link(linker.Input{
 		Items:    ingested.Items,
 		Entities: ingested.Entities,
 	})
 	items = append(items, github.ResolveDonePullRequests(ctx, previous, items, ingested.GitHubAuthoredComplete, logger)...)
-	return items
+	return Result{Items: items, Services: ingested.Services}
 }
 
 func Ingest(ctx context.Context, logger *slog.Logger) Ingested {
 	result := Ingested{
 		Items:    make([]protocol.Item, 0),
 		Entities: make([]protocol.Entity, 0),
+		Services: make([]protocol.ServiceStatus, 0, 3),
 	}
 
-	if github.EnsureGraphQLBudget(ctx, logger) {
+	githubStatus, githubAllowed := github.GraphQLServiceStatus(ctx, logger)
+	if githubAllowed {
 		reviewItems, authoredItems, err := github.FetchPullRequests(ctx, logger)
 		if err != nil {
 			logger.Warn("github pull request collection failed", "error", err)
+			githubStatus.Status = "error"
+			githubStatus.Detail = err.Error()
 		} else {
 			result.Items = append(result.Items, reviewItems...)
 			result.Items = append(result.Items, authoredItems...)
 			result.GitHubAuthoredComplete = true
+			githubStatus.Detail = github.PullRequestCollectionSummary(len(reviewItems), len(authoredItems))
 		}
 	}
+	result.Services = append(result.Services, githubStatus)
 
-	jiraEntities, err := jira.FetchAssignedIssues(ctx, logger)
+	jiraEntities, jiraStatus, err := jira.FetchAssignedIssues(ctx, logger)
 	if err != nil {
 		logger.Warn("jira issue collection failed", "error", err)
-	} else {
-		result.Entities = append(result.Entities, jiraEntities...)
 	}
+	result.Services = append(result.Services, jiraStatus)
+	result.Entities = append(result.Entities, jiraEntities...)
 
-	result.Entities = append(result.Entities, gitcollector.FetchWorktrees(ctx, logger)...)
+	gitEntities, gitStatus := gitcollector.FetchWorktrees(ctx, logger)
+	result.Services = append(result.Services, gitStatus)
+	result.Entities = append(result.Entities, gitEntities...)
 	return result
 }

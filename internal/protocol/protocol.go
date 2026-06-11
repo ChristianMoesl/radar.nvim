@@ -13,6 +13,12 @@ type Summary struct {
 	Done       int `json:"done"`
 }
 
+type ServiceStatus struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
+
 type Entity struct {
 	ID       string            `json:"id"`
 	Source   string            `json:"source"`
@@ -39,8 +45,9 @@ type Item struct {
 }
 
 type Response struct {
-	OK      bool     `json:"ok"`
-	Error   string   `json:"error,omitempty"`
-	Summary *Summary `json:"summary,omitempty"`
-	Items   []Item   `json:"items,omitempty"`
+	OK       bool            `json:"ok"`
+	Error    string          `json:"error,omitempty"`
+	Summary  *Summary        `json:"summary,omitempty"`
+	Items    []Item          `json:"items,omitempty"`
+	Services []ServiceStatus `json:"services,omitempty"`
 }
