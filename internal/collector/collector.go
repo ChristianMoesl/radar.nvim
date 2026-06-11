@@ -12,8 +12,9 @@ import (
 )
 
 type Ingested struct {
-	Items    []protocol.Item
-	Entities []protocol.Entity
+	Items                  []protocol.Item
+	Entities               []protocol.Entity
+	GitHubAuthoredComplete bool
 }
 
 func Collect(ctx context.Context, previous []protocol.Item, logger *slog.Logger) []protocol.Item {
@@ -22,7 +23,7 @@ func Collect(ctx context.Context, previous []protocol.Item, logger *slog.Logger)
 		Items:    ingested.Items,
 		Entities: ingested.Entities,
 	})
-	items = append(items, github.ResolveDonePullRequests(ctx, previous, items, logger)...)
+	items = append(items, github.ResolveDonePullRequests(ctx, previous, items, ingested.GitHubAuthoredComplete, logger)...)
 	return items
 }
 
@@ -32,21 +33,14 @@ func Ingest(ctx context.Context, logger *slog.Logger) Ingested {
 		Entities: make([]protocol.Entity, 0),
 	}
 
-	if github.EnsureSearchBudget(ctx, logger) {
-		reviewItems, err := github.FetchReviewRequests(ctx, logger)
+	if github.EnsureGraphQLBudget(ctx, logger) {
+		reviewItems, authoredItems, err := github.FetchPullRequests(ctx, logger)
 		if err != nil {
-			logger.Warn("github review request collection failed", "error", err)
+			logger.Warn("github pull request collection failed", "error", err)
 		} else {
 			result.Items = append(result.Items, reviewItems...)
-		}
-	}
-
-	if github.EnsureSearchBudget(ctx, logger) {
-		authoredItems, err := github.FetchAuthoredPullRequests(ctx, logger)
-		if err != nil {
-			logger.Warn("github authored PR collection failed", "error", err)
-		} else {
 			result.Items = append(result.Items, authoredItems...)
+			result.GitHubAuthoredComplete = true
 		}
 	}
 

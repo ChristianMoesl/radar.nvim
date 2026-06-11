@@ -3,6 +3,7 @@ package process
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -70,11 +71,7 @@ func Stop() error {
 func DaemonPIDs() ([]int, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		pid, err := ReadPID()
-		if err != nil {
-			return nil, err
-		}
-		return []int{pid}, nil
+		return daemonPIDsFromPS()
 	}
 
 	self := os.Getpid()
@@ -92,6 +89,44 @@ func DaemonPIDs() ([]int, error) {
 
 		parts := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
 		if isRadarDaemon(parts) {
+			pids = append(pids, pid)
+		}
+	}
+	return pids, nil
+}
+
+func daemonPIDsFromPS() ([]int, error) {
+	output, err := exec.Command("ps", "-axo", "pid=,command=").Output()
+	if err != nil {
+		pid, readErr := ReadPID()
+		if readErr != nil {
+			return nil, err
+		}
+		if Running(pid) {
+			return []int{pid}, nil
+		}
+		return nil, nil
+	}
+
+	self := os.Getpid()
+	seen := map[int]bool{}
+	pids := make([]int, 0)
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		pidText, command, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(pidText))
+		if err != nil || pid == self || seen[pid] {
+			continue
+		}
+		fields := strings.Fields(command)
+		if isRadarDaemon(fields) {
+			seen[pid] = true
 			pids = append(pids, pid)
 		}
 	}

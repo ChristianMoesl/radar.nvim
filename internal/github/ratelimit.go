@@ -10,11 +10,13 @@ import (
 
 const minSearchRemaining = 2
 const minCoreRemaining = 5
+const minGraphQLRemaining = 100
 
 type rateLimitResponse struct {
 	Resources struct {
-		Core   rateLimitResource `json:"core"`
-		Search rateLimitResource `json:"search"`
+		Core    rateLimitResource `json:"core"`
+		Search  rateLimitResource `json:"search"`
+		GraphQL rateLimitResource `json:"graphql"`
 	} `json:"resources"`
 }
 
@@ -25,11 +27,12 @@ type rateLimitResource struct {
 }
 
 var rateState = struct {
-	mu          sync.Mutex
-	fetched     time.Time
-	response    rateLimitResponse
-	coreUntil   time.Time
-	searchUntil time.Time
+	mu           sync.Mutex
+	fetched      time.Time
+	response     rateLimitResponse
+	coreUntil    time.Time
+	searchUntil  time.Time
+	graphqlUntil time.Time
 }{response: rateLimitResponse{}}
 
 func EnsureSearchBudget(ctx context.Context, logger *slog.Logger) bool {
@@ -44,7 +47,7 @@ func EnsureSearchBudget(ctx context.Context, logger *slog.Logger) bool {
 	if !hasBudget("search", limits.Resources.Search, minSearchRemaining, logger) {
 		return false
 	}
-	reserve("search")
+	reserve("search", 1)
 	return true
 }
 
@@ -60,7 +63,23 @@ func EnsureCoreBudget(ctx context.Context, logger *slog.Logger) bool {
 	if !hasBudget("core", limits.Resources.Core, minCoreRemaining, logger) {
 		return false
 	}
-	reserve("core")
+	reserve("core", 1)
+	return true
+}
+
+func EnsureGraphQLBudget(ctx context.Context, logger *slog.Logger) bool {
+	if pausedUntil("graphql", logger) {
+		return false
+	}
+	limits, err := rateLimits(ctx, logger)
+	if err != nil {
+		logger.Warn("could not fetch github rate limits; skipping github collection to be safe", "error", err)
+		return false
+	}
+	if !hasBudget("graphql", limits.Resources.GraphQL, minGraphQLRemaining, logger) {
+		return false
+	}
+	reserve("graphql", 10)
 	return true
 }
 
@@ -74,6 +93,8 @@ func pausedUntil(name string, logger *slog.Logger) bool {
 		until = rateState.coreUntil
 	case "search":
 		until = rateState.searchUntil
+	case "graphql":
+		until = rateState.graphqlUntil
 	}
 	if until.IsZero() || time.Now().After(until) {
 		return false
@@ -106,6 +127,9 @@ func rateLimits(ctx context.Context, logger *slog.Logger) (rateLimitResponse, er
 		"search_remaining", response.Resources.Search.Remaining,
 		"search_limit", response.Resources.Search.Limit,
 		"search_reset", resetTime(response.Resources.Search.Reset),
+		"graphql_remaining", response.Resources.GraphQL.Remaining,
+		"graphql_limit", response.Resources.GraphQL.Limit,
+		"graphql_reset", resetTime(response.Resources.GraphQL.Reset),
 	)
 	return response, nil
 }
@@ -140,6 +164,8 @@ func pause(name string, until time.Time) {
 		rateState.coreUntil = until
 	case "search":
 		rateState.searchUntil = until
+	case "graphql":
+		rateState.graphqlUntil = until
 	}
 }
 
@@ -151,19 +177,17 @@ func PauseCore(until time.Time) {
 	pause("core", until)
 }
 
-func reserve(name string) {
+func reserve(name string, cost int) {
 	rateState.mu.Lock()
 	defer rateState.mu.Unlock()
 
 	switch name {
 	case "core":
-		if rateState.response.Resources.Core.Remaining > 0 {
-			rateState.response.Resources.Core.Remaining--
-		}
+		rateState.response.Resources.Core.Remaining = max(0, rateState.response.Resources.Core.Remaining-cost)
 	case "search":
-		if rateState.response.Resources.Search.Remaining > 0 {
-			rateState.response.Resources.Search.Remaining--
-		}
+		rateState.response.Resources.Search.Remaining = max(0, rateState.response.Resources.Search.Remaining-cost)
+	case "graphql":
+		rateState.response.Resources.GraphQL.Remaining = max(0, rateState.response.Resources.GraphQL.Remaining-cost)
 	}
 }
 
@@ -180,12 +204,15 @@ func RateLimitSummary(ctx context.Context, logger *slog.Logger) (string, error) 
 		return "", err
 	}
 	return fmt.Sprintf(
-		"github core %d/%d reset %s, search %d/%d reset %s",
+		"github core %d/%d reset %s, search %d/%d reset %s, graphql %d/%d reset %s",
 		limits.Resources.Core.Remaining,
 		limits.Resources.Core.Limit,
 		resetTime(limits.Resources.Core.Reset),
 		limits.Resources.Search.Remaining,
 		limits.Resources.Search.Limit,
 		resetTime(limits.Resources.Search.Reset),
+		limits.Resources.GraphQL.Remaining,
+		limits.Resources.GraphQL.Limit,
+		resetTime(limits.Resources.GraphQL.Reset),
 	), nil
 }

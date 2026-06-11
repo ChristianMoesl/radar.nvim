@@ -52,6 +52,66 @@ type searchPullRequest struct {
 	} `json:"repository"`
 }
 
+type graphQLPullRequestsResponse struct {
+	Data struct {
+		ReviewRequested graphQLSearchResult `json:"reviewRequested"`
+		Authored        graphQLSearchResult `json:"authored"`
+	} `json:"data"`
+}
+
+type graphQLSearchResult struct {
+	Nodes []searchPullRequest `json:"nodes"`
+}
+
+const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: String!) {
+  reviewRequested: search(query: $reviewQuery, type: ISSUE, first: 100) {
+    nodes {
+      ... on PullRequest {
+        number
+        title
+        url
+        state
+        isDraft
+        repository { nameWithOwner }
+      }
+    }
+  }
+  authored: search(query: $authoredQuery, type: ISSUE, first: 100) {
+    nodes {
+      ... on PullRequest {
+        number
+        title
+        url
+        state
+        isDraft
+        repository { nameWithOwner }
+      }
+    }
+  }
+}`
+
+func FetchPullRequests(ctx context.Context, logger *slog.Logger) ([]protocol.Item, []protocol.Item, error) {
+	var response graphQLPullRequestsResponse
+	args := []string{
+		"api", "graphql",
+		"-f", "query=" + pullRequestsGraphQLQuery,
+		"-F", "reviewQuery=is:pr is:open review-requested:@me",
+		"-F", "authoredQuery=is:pr is:open author:@me",
+	}
+	if err := ghJSON(ctx, args, &response); err != nil {
+		return nil, nil, fmt.Errorf("fetch github pull requests: %w", err)
+	}
+
+	reviewItems := reviewRequestItems(response.Data.ReviewRequested.Nodes)
+	authoredItems := authoredPullRequestItems(response.Data.Authored.Nodes)
+	logger.Debug(
+		"fetched github pull requests",
+		"review_requested", len(reviewItems),
+		"authored", len(authoredItems),
+	)
+	return reviewItems, authoredItems, nil
+}
+
 func FetchReviewRequests(ctx context.Context, logger *slog.Logger) ([]protocol.Item, error) {
 	prs, err := fetchReviewRequestedPullRequests(ctx)
 	if err != nil {
@@ -59,13 +119,27 @@ func FetchReviewRequests(ctx context.Context, logger *slog.Logger) ([]protocol.I
 	}
 	logger.Debug("fetched github review requested pull requests", "count", len(prs))
 
+	items := reviewRequestItems(prs)
+	logger.Debug("github review requests classified", "count", len(items))
+	return items, nil
+}
+
+func FetchAuthoredPullRequests(ctx context.Context, logger *slog.Logger) ([]protocol.Item, error) {
+	prs, err := fetchAuthoredPullRequests(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fetch authored pull requests: %w", err)
+	}
+	logger.Debug("fetched authored github pull requests", "count", len(prs))
+
+	items := authoredPullRequestItems(prs)
+	logger.Debug("authored github pull requests classified", "count", len(items))
+	return items, nil
+}
+
+func reviewRequestItems(prs []searchPullRequest) []protocol.Item {
 	items := make([]protocol.Item, 0, len(prs))
 	for _, pr := range prs {
-		repo := pr.Repository.FullName
-		if repo == "" {
-			repo = pr.Repository.NameWithOwner
-		}
-
+		repo := repoName(pr)
 		item := protocol.Item{
 			ID:        fmt.Sprintf("github:review_request:%s:%d", repo, pr.Number),
 			Kind:      "github_review_request",
@@ -78,25 +152,13 @@ func FetchReviewRequests(ctx context.Context, logger *slog.Logger) ([]protocol.I
 		item.Entities = []protocol.Entity{githubEntity(item, "pull_request")}
 		items = append(items, item)
 	}
-
-	logger.Debug("github review requests classified", "count", len(items))
-	return items, nil
+	return items
 }
 
-func FetchAuthoredPullRequests(ctx context.Context, logger *slog.Logger) ([]protocol.Item, error) {
-	prs, err := fetchAuthoredPullRequests(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("fetch authored pull requests: %w", err)
-	}
-	logger.Debug("fetched authored github pull requests", "count", len(prs))
-
+func authoredPullRequestItems(prs []searchPullRequest) []protocol.Item {
 	items := make([]protocol.Item, 0, len(prs))
 	for _, pr := range prs {
-		repo := pr.Repository.FullName
-		if repo == "" {
-			repo = pr.Repository.NameWithOwner
-		}
-
+		repo := repoName(pr)
 		reason := "open PR"
 		if pr.Draft {
 			reason = "draft PR"
@@ -114,12 +176,21 @@ func FetchAuthoredPullRequests(ctx context.Context, logger *slog.Logger) ([]prot
 		item.Entities = []protocol.Entity{githubEntity(item, "pull_request")}
 		items = append(items, item)
 	}
-
-	logger.Debug("authored github pull requests classified", "count", len(items))
-	return items, nil
+	return items
 }
 
-func ResolveDonePullRequests(ctx context.Context, previous []protocol.Item, active []protocol.Item, logger *slog.Logger) []protocol.Item {
+func repoName(pr searchPullRequest) string {
+	if pr.Repository.FullName != "" {
+		return pr.Repository.FullName
+	}
+	return pr.Repository.NameWithOwner
+}
+
+func ResolveDonePullRequests(ctx context.Context, previous []protocol.Item, active []protocol.Item, authoredComplete bool, logger *slog.Logger) []protocol.Item {
+	if !authoredComplete {
+		logger.Debug("skipping github done resolution; authored PR collection was incomplete")
+		return keepTodaysDoneItems(previous)
+	}
 	if !EnsureCoreBudget(ctx, logger) {
 		return keepTodaysDoneItems(previous)
 	}
