@@ -56,16 +56,18 @@ func Ingest(ctx context.Context, previous []protocol.Item, logger *slog.Logger) 
 			result.Items = append(result.Items, reviewItems...)
 			result.Items = append(result.Items, authoredItems...)
 			result.Items = append(result.Items, activityItems...)
+			trackedCount := 0
 			if filterErr == nil {
 				trackedItems, err := github.FetchRulePullRequests(ctx, filterCfg, logger)
 				if err != nil {
 					logger.Warn("github rule pull request collection failed", "error", err)
 				} else {
+					trackedCount = len(trackedItems)
 					result.Items = appendMissingPullRequests(result.Items, trackedItems)
 				}
 			}
 			result.GitHubAuthoredComplete = true
-			githubStatus.Detail = github.PullRequestCollectionSummary(len(reviewItems), len(authoredItems))
+			githubStatus.Detail = github.PullRequestCollectionSummary(len(reviewItems), len(authoredItems), trackedCount)
 		}
 	}
 	result.Services = append(result.Services, githubStatus)

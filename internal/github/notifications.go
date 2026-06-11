@@ -242,8 +242,8 @@ func authoredPullRequestItems(prs []searchPullRequest) []protocol.Item {
 	return items
 }
 
-func PullRequestCollectionSummary(reviewCount int, authoredCount int) string {
-	return fmt.Sprintf("%d review requests, %d authored PRs", reviewCount, authoredCount)
+func PullRequestCollectionSummary(reviewCount int, authoredCount int, trackedCount int) string {
+	return fmt.Sprintf("%d review requests, %d authored PRs, %d tracked PRs", reviewCount, authoredCount, trackedCount)
 }
 
 type pullRequestActivity struct {

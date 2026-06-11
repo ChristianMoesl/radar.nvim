@@ -6,6 +6,7 @@ local config = {
 	refresh_ms = 30000,
 	width = 140,
 	height = 0.85,
+	padding_x = 1,
 	notify_new_items = true,
 	prefer_local_radar_binary = true,
 	auto_reload_binary = true,
@@ -22,7 +23,11 @@ local config = {
 local state = {
 	summary = { immediate = 0, attention = 0, in_progress = 0, done = 0, low_priority = 0 },
 	items = {},
-	services = {},
+	services = {
+		{ name = "github", status = "initializing" },
+		{ name = "jira", status = "initializing" },
+		{ name = "git", status = "initializing" },
+	},
 	timer = nil,
 	buf = nil,
 	win = nil,
@@ -244,6 +249,7 @@ local function service_status_hl(status)
 		paused = "RadarServiceStatusWarn",
 		error = "RadarServiceStatusError",
 		disabled = "RadarServiceStatusDisabled",
+		initializing = "RadarServiceStatusInitializing",
 	})[status] or "RadarServiceStatusDisabled"
 end
 
@@ -276,7 +282,9 @@ local function add_item(lines, line_items, line_highlights, item)
 
 	table.insert(lines, line)
 	line_items[#lines] = item
-	add_highlight(line_highlights, #lines, #prefix, #prefix + #title, "RadarItemTitle")
+	local title_hl = item.attention == "low_priority" and "RadarLowPriorityItemTitle" or "RadarItemTitle"
+	local entity_hl = item.attention == "low_priority" and "RadarLowPriorityEntityIdentifier" or "RadarEntityIdentifier"
+	add_highlight(line_highlights, #lines, #prefix, #prefix + #title, title_hl)
 
 	for _, entity in ipairs(item.entities or {}) do
 		local entity_prefix = "  ↳ "
@@ -285,7 +293,7 @@ local function add_item(lines, line_items, line_highlights, item)
 
 		table.insert(lines, entity_line)
 		line_items[#lines] = entity
-		add_highlight(line_highlights, #lines, #entity_prefix, #entity_prefix + #identifier, "RadarEntityIdentifier")
+		add_highlight(line_highlights, #lines, #entity_prefix, #entity_prefix + #identifier, entity_hl)
 	end
 end
 
@@ -355,8 +363,9 @@ local function render_window()
 	end
 
 	local lines, line_items, line_highlights = render_lines()
+	local padding = string.rep(" ", config.padding_x)
 	for i, line in ipairs(lines) do
-		lines[i] = sanitize_line(line)
+		lines[i] = padding .. sanitize_line(line) .. padding
 	end
 	state.line_items = line_items
 	state.line_highlights = line_highlights
@@ -365,7 +374,7 @@ local function render_window()
 	vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
 	vim.api.nvim_buf_clear_namespace(state.buf, ns, 0, -1)
 	for _, highlight in ipairs(line_highlights) do
-		vim.api.nvim_buf_add_highlight(state.buf, ns, highlight.group, highlight.line - 1, highlight.start_col, highlight.end_col)
+		vim.api.nvim_buf_add_highlight(state.buf, ns, highlight.group, highlight.line - 1, highlight.start_col + config.padding_x, highlight.end_col + config.padding_x)
 	end
 	vim.bo[state.buf].modifiable = false
 	vim.bo[state.buf].buftype = "nofile"
@@ -440,12 +449,15 @@ end
 
 local function setup_highlights()
 	vim.api.nvim_set_hl(0, "RadarItemTitle", { link = "Title", default = true })
+	vim.api.nvim_set_hl(0, "RadarLowPriorityItemTitle", { link = "Comment", default = true })
 	vim.api.nvim_set_hl(0, "RadarEntityIdentifier", { link = "Identifier", default = true })
+	vim.api.nvim_set_hl(0, "RadarLowPriorityEntityIdentifier", { link = "Comment", default = true })
 	vim.api.nvim_set_hl(0, "RadarServiceName", { link = "Type", default = true })
 	vim.api.nvim_set_hl(0, "RadarServiceStatusOK", { link = "String", default = true })
 	vim.api.nvim_set_hl(0, "RadarServiceStatusWarn", { link = "WarningMsg", default = true })
 	vim.api.nvim_set_hl(0, "RadarServiceStatusError", { link = "ErrorMsg", default = true })
 	vim.api.nvim_set_hl(0, "RadarServiceStatusDisabled", { link = "Comment", default = true })
+	vim.api.nvim_set_hl(0, "RadarServiceStatusInitializing", { link = "Comment", default = true })
 end
 
 local function lazy_plugin_name()
