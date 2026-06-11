@@ -90,7 +90,7 @@ type graphQLSearchResult struct {
 }
 
 const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: String!, $participatedQuery: String!) {
-  reviewRequested: search(query: $reviewQuery, type: ISSUE, first: 100) {
+  reviewRequested: search(query: $reviewQuery, type: ISSUE, first: 50) {
     nodes {
       ... on PullRequest {
         number
@@ -102,11 +102,11 @@ const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: S
         body
         author { login }
         repository { nameWithOwner }
-        reviewThreads(first: 100) { nodes { id isResolved comments(first: 100) { nodes { author { login } createdAt } } } }
+        reviewThreads(first: 25) { nodes { id isResolved comments(first: 25) { nodes { author { login } createdAt } } } }
       }
     }
   }
-  authored: search(query: $authoredQuery, type: ISSUE, first: 100) {
+  authored: search(query: $authoredQuery, type: ISSUE, first: 50) {
     nodes {
       ... on PullRequest {
         number
@@ -118,13 +118,13 @@ const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: S
         body
         author { login }
         repository { nameWithOwner }
-        comments(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { author { login } createdAt } }
-        reviews(first: 100) { nodes { author { login } createdAt } }
-        reviewThreads(first: 100) { nodes { id isResolved comments(first: 100) { nodes { author { login } createdAt } } } }
+        comments(first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { author { login } createdAt } }
+        reviews(first: 50) { nodes { author { login } createdAt } }
+        reviewThreads(first: 25) { nodes { id isResolved comments(first: 25) { nodes { author { login } createdAt } } } }
       }
     }
   }
-  participated: search(query: $participatedQuery, type: ISSUE, first: 100) {
+  participated: search(query: $participatedQuery, type: ISSUE, first: 50) {
     nodes {
       ... on PullRequest {
         number
@@ -135,7 +135,7 @@ const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: S
         headRefName
         body
         repository { nameWithOwner }
-        reviewThreads(first: 100) { nodes { id isResolved comments(first: 100) { nodes { author { login } createdAt } } } }
+        reviewThreads(first: 25) { nodes { id isResolved comments(first: 25) { nodes { author { login } createdAt } } } }
       }
     }
   }
