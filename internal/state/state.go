@@ -153,6 +153,8 @@ func (s *Store) Summary() protocol.Summary {
 			summary.InProgress++
 		case "done":
 			summary.Done++
+		case "low_priority":
+			summary.LowPriority++
 		}
 	}
 	return summary

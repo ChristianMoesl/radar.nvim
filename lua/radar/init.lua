@@ -15,11 +15,12 @@ local config = {
 		attention = "👀",
 		in_progress = "⏳",
 		done = "✅",
+		low_priority = "🔇",
 	},
 }
 
 local state = {
-	summary = { immediate = 0, attention = 0, in_progress = 0, done = 0 },
+	summary = { immediate = 0, attention = 0, in_progress = 0, done = 0, low_priority = 0 },
 	items = {},
 	services = {},
 	timer = nil,
@@ -140,6 +141,21 @@ local function open_url(url)
 	end
 end
 
+local function open_filters()
+	run({ resolve_radar_cmd(), "filters-path" }, function(result)
+		if result.code ~= 0 then
+			vim.notify("Could not open Radar filters: " .. (result.stderr or ""), vim.log.levels.ERROR)
+			return
+		end
+		local path = vim.trim(result.stdout or "")
+		if path == "" then
+			vim.notify("Radar filters path is empty", vim.log.levels.ERROR)
+			return
+		end
+		vim.cmd.edit(vim.fn.fnameescape(path))
+	end)
+end
+
 local function item_icon(attention)
 	return config.icons[attention] or "•"
 end
@@ -150,6 +166,7 @@ local function item_label(attention)
 		attention = "Needs attention",
 		in_progress = "In progress",
 		done = "Done today",
+		low_priority = "Low priority",
 	})[attention] or attention or "Unknown"
 end
 
@@ -159,6 +176,7 @@ local function item_status(attention)
 		attention = "attention",
 		in_progress = "progress",
 		done = "done",
+		low_priority = "low",
 	})[attention] or attention or "unknown"
 end
 
@@ -288,7 +306,7 @@ end
 local function render_lines()
 	local s = state.summary
 	local lines = {
-		string.format("Radar  %s %d urgent  %s %d attention  %s %d progress  %s %d done    <CR>: open  r: refresh  q: close", config.icons.immediate, s.immediate or 0, config.icons.attention, s.attention or 0, config.icons.in_progress, s.in_progress or 0, config.icons.done, s.done or 0),
+		string.format("Radar  %s %d urgent  %s %d attention  %s %d progress  %s %d done  %s %d low    <CR>: open  r: refresh  f: filters  q: close", config.icons.immediate, s.immediate or 0, config.icons.attention, s.attention or 0, config.icons.in_progress, s.in_progress or 0, config.icons.done, s.done or 0, config.icons.low_priority, s.low_priority or 0),
 		"",
 	}
 	local line_items = {}
@@ -298,6 +316,7 @@ local function render_lines()
 		{ key = "attention", title = "Need attention", icon = config.icons.attention },
 		{ key = "in_progress", title = "In progress", icon = config.icons.in_progress },
 		{ key = "done", title = "Done today", icon = config.icons.done },
+		{ key = "low_priority", title = "Low priority", icon = config.icons.low_priority },
 	}
 
 	for _, group in ipairs(groups) do
@@ -398,6 +417,7 @@ local function ensure_window()
 			render_window()
 		end)
 	end, { buffer = state.buf, silent = true })
+	vim.keymap.set("n", "f", open_filters, { buffer = state.buf, silent = true })
 	vim.keymap.set("n", "<CR>", function()
 		local line = vim.api.nvim_win_get_cursor(0)[1]
 		local item = state.line_items[line]
@@ -531,7 +551,11 @@ end
 
 function M.statusline()
 	local s = state.summary
-	return string.format("%s%d %s%d %s%d %s%d", config.icons.immediate, s.immediate or 0, config.icons.attention, s.attention or 0, config.icons.in_progress, s.in_progress or 0, config.icons.done, s.done or 0)
+	local status = string.format("%s%d %s%d %s%d %s%d", config.icons.immediate, s.immediate or 0, config.icons.attention, s.attention or 0, config.icons.in_progress, s.in_progress or 0, config.icons.done, s.done or 0)
+	if (s.low_priority or 0) > 0 then
+		status = string.format("%s %s%d", status, config.icons.low_priority, s.low_priority or 0)
+	end
+	return status
 end
 
 function M.open()
@@ -560,6 +584,7 @@ function M.setup(opts)
 	vim.api.nvim_create_user_command("RadarRefresh", function()
 		M.refresh()
 	end, {})
+	vim.api.nvim_create_user_command("RadarFilters", open_filters, {})
 	vim.api.nvim_create_user_command("RadarStart", start_daemon, {})
 	vim.api.nvim_create_user_command("RadarStop", stop_daemon, {})
 	vim.api.nvim_create_user_command("RadarRestart", function()

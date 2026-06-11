@@ -7,10 +7,11 @@ type Request struct {
 }
 
 type Summary struct {
-	Immediate  int `json:"immediate"`
-	Attention  int `json:"attention"`
-	InProgress int `json:"in_progress"`
-	Done       int `json:"done"`
+	Immediate   int `json:"immediate"`
+	Attention   int `json:"attention"`
+	InProgress  int `json:"in_progress"`
+	Done        int `json:"done"`
+	LowPriority int `json:"low_priority"`
 }
 
 type ServiceStatus struct {
@@ -33,15 +34,16 @@ type Entity struct {
 }
 
 type Item struct {
-	ID        string   `json:"id"`
-	Kind      string   `json:"kind"`
-	Title     string   `json:"title"`
-	Repo      string   `json:"repo,omitempty"`
-	URL       string   `json:"url,omitempty"`
-	Attention string   `json:"attention"`
-	Reason    string   `json:"reason"`
-	DoneAt    string   `json:"done_at,omitempty"`
-	Entities  []Entity `json:"entities,omitempty"`
+	ID        string            `json:"id"`
+	Kind      string            `json:"kind"`
+	Title     string            `json:"title"`
+	Repo      string            `json:"repo,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Attention string            `json:"attention"`
+	Reason    string            `json:"reason"`
+	DoneAt    string            `json:"done_at,omitempty"`
+	Entities  []Entity          `json:"entities,omitempty"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
 type Response struct {

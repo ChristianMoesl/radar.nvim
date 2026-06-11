@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 
+	"radar.nvim/internal/filters"
 	"radar.nvim/internal/protocol"
 	"radar.nvim/internal/socket"
 	"radar.nvim/internal/state"
@@ -65,17 +66,20 @@ func (s *Server) handle(conn net.Conn) {
 		s.logger.Debug("request received", "method", req.Method)
 		switch req.Method {
 		case "summary":
-			summary := s.store.Summary()
+			items := s.filteredItems()
+			summary := filters.Summary(items)
 			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Services: s.store.Services()})
 		case "items":
-			summary := s.store.Summary()
-			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Items: s.store.Items(), Services: s.store.Services()})
+			items := s.filteredItems()
+			summary := filters.Summary(items)
+			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Items: items, Services: s.store.Services()})
 		case "refresh":
 			if s.refresh != nil {
 				s.refresh()
 			}
-			summary := s.store.Summary()
-			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Items: s.store.Items(), Services: s.store.Services()})
+			items := s.filteredItems()
+			summary := filters.Summary(items)
+			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Items: items, Services: s.store.Services()})
 		default:
 			s.logger.Warn("unknown method", "method", req.Method)
 			_ = encoder.Encode(protocol.Response{OK: false, Error: "unknown method: " + req.Method})
@@ -85,4 +89,14 @@ func (s *Server) handle(conn net.Conn) {
 	if err := scanner.Err(); err != nil {
 		s.logger.Warn("client read failed", "error", err)
 	}
+}
+
+func (s *Server) filteredItems() []protocol.Item {
+	items := s.store.Items()
+	cfg, err := filters.Load()
+	if err != nil {
+		s.logger.Warn("could not load filters", "error", err)
+		return items
+	}
+	return filters.Apply(items, cfg)
 }

@@ -109,6 +109,32 @@ RADAR_GIT_REPOS=/path/to/repo:/path/to/another/repo ./radar daemon
 
 If unset, Radar tries the daemon's current working directory.
 
+## Filters
+
+Radar can hide or deprioritize noisy repositories and users with an editable JSON file:
+
+```sh
+./radar filters-path
+```
+
+By default this is `$XDG_CONFIG_HOME/radar/filters.json` or `~/.config/radar/filters.json`.
+Override it with `RADAR_FILTERS=/path/to/filters.json`.
+
+Example:
+
+```json
+{
+  "mute_repos": ["some-org/noisy-repo"],
+  "deprioritize_repos": ["some-org/low-priority-repo"],
+  "mute_users": ["dependabot[bot]"],
+  "deprioritize_users": ["renovate[bot]"]
+}
+```
+
+Muted items are hidden from the GUI and statusline counts. Deprioritized items move to the low-priority section.
+
+In Neovim, use `:RadarFilters` or press `f` in the Radar window to edit the file. Changes are picked up on the next `:RadarRefresh`, periodic refresh, or Radar window reopen.
+
 ## Local state
 
 The daemon stores the latest attention items locally:
@@ -174,5 +200,6 @@ Commands:
 ```vim
 :Radar
 :RadarRefresh
+:RadarFilters
 :RadarStart
 ```

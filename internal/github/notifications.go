@@ -48,6 +48,7 @@ type searchPullRequest struct {
 	ClosedAt    string `json:"closedAt"`
 	HeadRefName string `json:"headRefName"`
 	Body        string `json:"body"`
+	Author      *user  `json:"author"`
 	Repository  struct {
 		FullName      string `json:"fullName"`
 		NameWithOwner string `json:"nameWithOwner"`
@@ -76,6 +77,7 @@ const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: S
         isDraft
         headRefName
         body
+        author { login }
         repository { nameWithOwner }
       }
     }
@@ -90,6 +92,7 @@ const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: S
         isDraft
         headRefName
         body
+        author { login }
         repository { nameWithOwner }
       }
     }
@@ -154,6 +157,7 @@ func reviewRequestItems(prs []searchPullRequest) []protocol.Item {
 			URL:       pr.URL,
 			Attention: "attention",
 			Reason:    "review requested",
+			Metadata:  pullRequestMetadata(pr),
 		}
 		item.Entities = []protocol.Entity{githubEntity(item, "pull_request", pr.HeadRefName, pr.Body)}
 		items = append(items, item)
@@ -178,6 +182,7 @@ func authoredPullRequestItems(prs []searchPullRequest) []protocol.Item {
 			URL:       pr.URL,
 			Attention: "in_progress",
 			Reason:    reason,
+			Metadata:  pullRequestMetadata(pr),
 		}
 		item.Entities = []protocol.Entity{githubEntity(item, "pull_request", pr.HeadRefName, pr.Body)}
 		items = append(items, item)
@@ -194,6 +199,13 @@ func repoName(pr searchPullRequest) string {
 		return pr.Repository.FullName
 	}
 	return pr.Repository.NameWithOwner
+}
+
+func pullRequestMetadata(pr searchPullRequest) map[string]string {
+	if pr.Author == nil || pr.Author.Login == "" {
+		return nil
+	}
+	return map[string]string{"author": pr.Author.Login}
 }
 
 func ResolveDonePullRequests(ctx context.Context, previous []protocol.Item, active []protocol.Item, authoredComplete bool, logger *slog.Logger) []protocol.Item {
@@ -311,7 +323,7 @@ func fetchReviewRequestedPullRequests(ctx context.Context) ([]searchPullRequest,
 		"--review-requested", "@me",
 		"--state", "open",
 		"--limit", "100",
-		"--json", "number,title,url,repository,isDraft,state,body",
+		"--json", "number,title,url,repository,isDraft,state,body,author",
 	}
 	if err := ghJSON(ctx, args, &prs); err != nil {
 		return nil, err
@@ -326,7 +338,7 @@ func fetchAuthoredPullRequests(ctx context.Context) ([]searchPullRequest, error)
 		"--author", "@me",
 		"--state", "open",
 		"--limit", "100",
-		"--json", "number,title,url,repository,isDraft,state,body",
+		"--json", "number,title,url,repository,isDraft,state,body,author",
 	}
 	if err := ghJSON(ctx, args, &prs); err != nil {
 		return nil, err

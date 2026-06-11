@@ -12,6 +12,7 @@ import (
 
 	"radar.nvim/internal/client"
 	"radar.nvim/internal/collector"
+	"radar.nvim/internal/filters"
 	"radar.nvim/internal/github"
 	"radar.nvim/internal/logging"
 	"radar.nvim/internal/process"
@@ -43,6 +44,8 @@ func main() {
 		printLogPath()
 	case "state-path":
 		printStatePath()
+	case "filters-path":
+		printFiltersPath()
 	case "rate-limit", "rate-limits":
 		printRateLimit()
 	case "help", "-h", "--help":
@@ -205,6 +208,14 @@ func printStatePath() {
 	fmt.Println(path)
 }
 
+func printFiltersPath() {
+	path, err := filters.EnsureFile()
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Println(path)
+}
+
 func printRateLimit() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	summary, err := github.RateLimitSummary(context.Background(), logger)
@@ -215,7 +226,7 @@ func printRateLimit() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: radar [daemon|stop|restart|status|summary|items|list|refresh|log-path|state-path|rate-limit]")
+	fmt.Fprintln(os.Stderr, "usage: radar [daemon|stop|restart|status|summary|items|list|refresh|log-path|state-path|filters-path|rate-limit]")
 }
 
 func fatal(err error) {
