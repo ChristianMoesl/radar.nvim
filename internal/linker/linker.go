@@ -7,7 +7,7 @@ import (
 	"radar.nvim/internal/protocol"
 )
 
-var ticketPattern = regexp.MustCompile(`[A-Z][A-Z0-9]+-[0-9]+`)
+var ticketPattern = regexp.MustCompile(`(?i)[A-Z][A-Z0-9]+-[0-9]+`)
 
 type Input struct {
 	Items    []protocol.Item
@@ -94,8 +94,8 @@ func keysForEntity(entity protocol.Entity) []string {
 
 func valuesForEntity(entity protocol.Entity) []string {
 	values := []string{entity.ID, entity.Title, entity.Branch, entity.Path, entity.Repo, entity.URL}
-	if entity.Metadata != nil {
-		values = append(values, entity.Metadata["ticket"], entity.Metadata["key"])
+	for _, value := range entity.Metadata {
+		values = append(values, value)
 	}
 	return values
 }
@@ -104,10 +104,11 @@ func extractKeys(values ...string) []string {
 	keys := make([]string, 0)
 	seen := map[string]bool{}
 	for _, value := range values {
-		for _, match := range ticketPattern.FindAllString(strings.ToUpper(value), -1) {
-			if !seen[match] {
-				seen[match] = true
-				keys = append(keys, match)
+		for _, match := range ticketPattern.FindAllString(value, -1) {
+			key := strings.ToUpper(match)
+			if !seen[key] {
+				seen[key] = true
+				keys = append(keys, key)
 			}
 		}
 	}

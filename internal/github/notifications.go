@@ -40,13 +40,15 @@ type pullRequest struct {
 }
 
 type searchPullRequest struct {
-	Number     int    `json:"number"`
-	Title      string `json:"title"`
-	URL        string `json:"url"`
-	State      string `json:"state"`
-	Draft      bool   `json:"isDraft"`
-	ClosedAt   string `json:"closedAt"`
-	Repository struct {
+	Number      int    `json:"number"`
+	Title       string `json:"title"`
+	URL         string `json:"url"`
+	State       string `json:"state"`
+	Draft       bool   `json:"isDraft"`
+	ClosedAt    string `json:"closedAt"`
+	HeadRefName string `json:"headRefName"`
+	Body        string `json:"body"`
+	Repository  struct {
 		FullName      string `json:"fullName"`
 		NameWithOwner string `json:"nameWithOwner"`
 	} `json:"repository"`
@@ -72,6 +74,8 @@ const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: S
         url
         state
         isDraft
+        headRefName
+        body
         repository { nameWithOwner }
       }
     }
@@ -84,6 +88,8 @@ const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: S
         url
         state
         isDraft
+        headRefName
+        body
         repository { nameWithOwner }
       }
     }
@@ -149,7 +155,7 @@ func reviewRequestItems(prs []searchPullRequest) []protocol.Item {
 			Attention: "attention",
 			Reason:    "review requested",
 		}
-		item.Entities = []protocol.Entity{githubEntity(item, "pull_request")}
+		item.Entities = []protocol.Entity{githubEntity(item, "pull_request", pr.HeadRefName, pr.Body)}
 		items = append(items, item)
 	}
 	return items
@@ -173,7 +179,7 @@ func authoredPullRequestItems(prs []searchPullRequest) []protocol.Item {
 			Attention: "in_progress",
 			Reason:    reason,
 		}
-		item.Entities = []protocol.Entity{githubEntity(item, "pull_request")}
+		item.Entities = []protocol.Entity{githubEntity(item, "pull_request", pr.HeadRefName, pr.Body)}
 		items = append(items, item)
 	}
 	return items
@@ -247,7 +253,7 @@ func ResolveDonePullRequests(ctx context.Context, previous []protocol.Item, acti
 			DoneAt:    pr.ClosedAt,
 			Entities:  item.Entities,
 		}
-		done.Entities = append(done.Entities, githubEntity(done, "pull_request"))
+		done.Entities = append(done.Entities, githubEntity(done, "pull_request", "", ""))
 		items = append(items, done)
 	}
 
@@ -265,16 +271,21 @@ func keepTodaysDoneItems(previous []protocol.Item) []protocol.Item {
 	return items
 }
 
-func githubEntity(item protocol.Item, kind string) protocol.Entity {
-	return protocol.Entity{
+func githubEntity(item protocol.Item, kind string, branch string, body string) protocol.Entity {
+	entity := protocol.Entity{
 		ID:     item.ID,
 		Source: "github",
 		Kind:   kind,
 		Title:  item.Title,
 		Repo:   item.Repo,
 		URL:    item.URL,
+		Branch: branch,
 		Status: item.Reason,
 	}
+	if body != "" {
+		entity.Metadata = map[string]string{"body": body}
+	}
+	return entity
 }
 
 func currentLogin(ctx context.Context) (string, error) {
@@ -300,7 +311,7 @@ func fetchReviewRequestedPullRequests(ctx context.Context) ([]searchPullRequest,
 		"--review-requested", "@me",
 		"--state", "open",
 		"--limit", "100",
-		"--json", "number,title,url,repository,isDraft,state",
+		"--json", "number,title,url,repository,isDraft,state,body",
 	}
 	if err := ghJSON(ctx, args, &prs); err != nil {
 		return nil, err
@@ -315,7 +326,7 @@ func fetchAuthoredPullRequests(ctx context.Context) ([]searchPullRequest, error)
 		"--author", "@me",
 		"--state", "open",
 		"--limit", "100",
-		"--json", "number,title,url,repository,isDraft,state",
+		"--json", "number,title,url,repository,isDraft,state,body",
 	}
 	if err := ghJSON(ctx, args, &prs); err != nil {
 		return nil, err

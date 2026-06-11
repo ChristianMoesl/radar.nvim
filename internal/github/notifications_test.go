@@ -27,6 +27,8 @@ case "$*" in
           "url": "https://github.com/acme/widgets/pull/12",
           "state": "OPEN",
           "isDraft": false,
+          "headRefName": "dpscap-12-review-me",
+          "body": "refs: DPSCAP-12",
           "repository": { "nameWithOwner": "acme/widgets" }
         }
       ]
@@ -39,6 +41,8 @@ case "$*" in
           "url": "https://github.com/acme/app/pull/34",
           "state": "OPEN",
           "isDraft": true,
+          "headRefName": "DPSCAP-34-my-draft",
+          "body": "refs: DPSCAP-34",
           "repository": { "nameWithOwner": "acme/app" }
         }
       ]
@@ -71,7 +75,7 @@ esac
 		Attention: "attention",
 		Reason:    "review requested",
 	})
-	assertEntity(t, reviewItems[0].Entities, "github:review_request:acme/widgets:12", "review requested")
+	assertEntity(t, reviewItems[0].Entities, "github:review_request:acme/widgets:12", "review requested", "dpscap-12-review-me", "refs: DPSCAP-12")
 
 	if len(authoredItems) != 1 {
 		t.Fatalf("authored item count = %d, want 1", len(authoredItems))
@@ -85,7 +89,7 @@ esac
 		Attention: "in_progress",
 		Reason:    "draft PR",
 	})
-	assertEntity(t, authoredItems[0].Entities, "github:own_pr:acme/app:34", "draft PR")
+	assertEntity(t, authoredItems[0].Entities, "github:own_pr:acme/app:34", "draft PR", "DPSCAP-34-my-draft", "refs: DPSCAP-34")
 }
 
 func TestResolveDonePullRequestsSkipsRemoteFetchWhenAuthoredIncomplete(t *testing.T) {
@@ -186,13 +190,13 @@ func assertItem(t *testing.T, got protocol.Item, want protocol.Item) {
 	}
 }
 
-func assertEntity(t *testing.T, entities []protocol.Entity, wantID string, wantStatus string) {
+func assertEntity(t *testing.T, entities []protocol.Entity, wantID string, wantStatus string, wantBranch string, wantBody string) {
 	t.Helper()
 	if len(entities) != 1 {
 		t.Fatalf("entity count = %d, want 1", len(entities))
 	}
 	entity := entities[0]
-	if entity.ID != wantID || entity.Source != "github" || entity.Kind != "pull_request" || entity.Status != wantStatus {
-		t.Fatalf("entity = %+v, want github pull_request %q status %q", entity, wantID, wantStatus)
+	if entity.ID != wantID || entity.Source != "github" || entity.Kind != "pull_request" || entity.Status != wantStatus || entity.Branch != wantBranch || entity.Metadata["body"] != wantBody {
+		t.Fatalf("entity = %+v, want github pull_request %q status %q branch %q body %q", entity, wantID, wantStatus, wantBranch, wantBody)
 	}
 }
