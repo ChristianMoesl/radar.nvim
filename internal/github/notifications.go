@@ -53,42 +53,30 @@ type searchPullRequest struct {
 }
 
 func FetchReviewRequests(ctx context.Context, logger *slog.Logger) ([]protocol.Item, error) {
-	login, err := currentLogin(ctx)
+	prs, err := fetchReviewRequestedPullRequests(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("get current github user: %w", err)
+		return nil, fmt.Errorf("fetch review requested pull requests: %w", err)
 	}
-	logger.Debug("fetched github user", "login", login)
+	logger.Debug("fetched github review requested pull requests", "count", len(prs))
 
-	notifications, err := fetchNotifications(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("fetch github notifications: %w", err)
-	}
-	logger.Debug("fetched github notifications", "count", len(notifications))
-
-	items := make([]protocol.Item, 0)
-	for _, notification := range notifications {
-		if notification.Reason != "review_requested" || notification.Subject.Type != "PullRequest" {
-			continue
+	items := make([]protocol.Item, 0, len(prs))
+	for _, pr := range prs {
+		repo := pr.Repository.FullName
+		if repo == "" {
+			repo = pr.Repository.NameWithOwner
 		}
 
-		pr, err := fetchPullRequest(ctx, notification.Subject.URL)
-		if err != nil {
-			logger.Warn("could not fetch pull request for notification", "notification", notification.ID, "url", notification.Subject.URL, "error", err)
-			continue
-		}
-		if !reviewRequestedFrom(login, pr) {
-			continue
-		}
-
-		items = append(items, protocol.Item{
-			ID:        "github:notification:" + notification.ID,
+		item := protocol.Item{
+			ID:        fmt.Sprintf("github:review_request:%s:%d", repo, pr.Number),
 			Kind:      "github_review_request",
-			Title:     notification.Subject.Title,
-			Repo:      notification.Repository.FullName,
-			URL:       pr.HTMLURL,
+			Title:     pr.Title,
+			Repo:      repo,
+			URL:       pr.URL,
 			Attention: "attention",
 			Reason:    "review requested",
-		})
+		}
+		item.Entities = []protocol.Entity{githubEntity(item, "pull_request")}
+		items = append(items, item)
 	}
 
 	logger.Debug("github review requests classified", "count", len(items))
@@ -114,7 +102,7 @@ func FetchAuthoredPullRequests(ctx context.Context, logger *slog.Logger) ([]prot
 			reason = "draft PR"
 		}
 
-		items = append(items, protocol.Item{
+		item := protocol.Item{
 			ID:        fmt.Sprintf("github:own_pr:%s:%d", repo, pr.Number),
 			Kind:      "github_own_pr",
 			Title:     pr.Title,
@@ -122,7 +110,9 @@ func FetchAuthoredPullRequests(ctx context.Context, logger *slog.Logger) ([]prot
 			URL:       pr.URL,
 			Attention: "in_progress",
 			Reason:    reason,
-		})
+		}
+		item.Entities = []protocol.Entity{githubEntity(item, "pull_request")}
+		items = append(items, item)
 	}
 
 	logger.Debug("authored github pull requests classified", "count", len(items))
@@ -130,6 +120,10 @@ func FetchAuthoredPullRequests(ctx context.Context, logger *slog.Logger) ([]prot
 }
 
 func ResolveDonePullRequests(ctx context.Context, previous []protocol.Item, active []protocol.Item, logger *slog.Logger) []protocol.Item {
+	if !EnsureCoreBudget(ctx, logger) {
+		return keepTodaysDoneItems(previous)
+	}
+
 	activeIDs := make(map[string]bool, len(active))
 	for _, item := range active {
 		activeIDs[item.ID] = true
@@ -167,7 +161,7 @@ func ResolveDonePullRequests(ctx context.Context, previous []protocol.Item, acti
 		if pr.Merged {
 			reason = "merged today"
 		}
-		items = append(items, protocol.Item{
+		done := protocol.Item{
 			ID:        fmt.Sprintf("github:done_pr:%s:%d", repo, number),
 			Kind:      "github_done_pr",
 			Title:     item.Title,
@@ -176,11 +170,36 @@ func ResolveDonePullRequests(ctx context.Context, previous []protocol.Item, acti
 			Attention: "done",
 			Reason:    reason,
 			DoneAt:    pr.ClosedAt,
-		})
+			Entities:  item.Entities,
+		}
+		done.Entities = append(done.Entities, githubEntity(done, "pull_request"))
+		items = append(items, done)
 	}
 
 	logger.Debug("resolved done github pull requests", "count", len(items))
 	return items
+}
+
+func keepTodaysDoneItems(previous []protocol.Item) []protocol.Item {
+	items := make([]protocol.Item, 0)
+	for _, item := range previous {
+		if item.Attention == "done" && isToday(item.DoneAt) {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func githubEntity(item protocol.Item, kind string) protocol.Entity {
+	return protocol.Entity{
+		ID:     item.ID,
+		Source: "github",
+		Kind:   kind,
+		Title:  item.Title,
+		Repo:   item.Repo,
+		URL:    item.URL,
+		Status: item.Reason,
+	}
 }
 
 func currentLogin(ctx context.Context) (string, error) {
@@ -197,6 +216,21 @@ func fetchNotifications(ctx context.Context) ([]notification, error) {
 		return nil, err
 	}
 	return notifications, nil
+}
+
+func fetchReviewRequestedPullRequests(ctx context.Context) ([]searchPullRequest, error) {
+	var prs []searchPullRequest
+	args := []string{
+		"search", "prs",
+		"--review-requested", "@me",
+		"--state", "open",
+		"--limit", "100",
+		"--json", "number,title,url,repository,isDraft,state",
+	}
+	if err := ghJSON(ctx, args, &prs); err != nil {
+		return nil, err
+	}
+	return prs, nil
 }
 
 func fetchAuthoredPullRequests(ctx context.Context) ([]searchPullRequest, error) {
@@ -284,7 +318,16 @@ func ghJSON(ctx context.Context, args []string, target any) error {
 	output, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return fmt.Errorf("gh %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
+			stderr := strings.TrimSpace(string(exitErr.Stderr))
+			if strings.Contains(stderr, "API rate limit exceeded") || strings.Contains(stderr, "secondary rate limit") {
+				until := time.Now().Add(15 * time.Minute)
+				if len(args) > 0 && args[0] == "search" {
+					PauseSearch(until)
+				} else {
+					PauseCore(until)
+				}
+			}
+			return fmt.Errorf("gh %s failed: %s", strings.Join(args, " "), stderr)
 		}
 		return err
 	}

@@ -13,15 +13,29 @@ type Summary struct {
 	Done       int `json:"done"`
 }
 
+type Entity struct {
+	ID       string            `json:"id"`
+	Source   string            `json:"source"`
+	Kind     string            `json:"kind"`
+	Title    string            `json:"title,omitempty"`
+	Repo     string            `json:"repo,omitempty"`
+	URL      string            `json:"url,omitempty"`
+	Path     string            `json:"path,omitempty"`
+	Branch   string            `json:"branch,omitempty"`
+	Status   string            `json:"status,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
 type Item struct {
-	ID        string `json:"id"`
-	Kind      string `json:"kind"`
-	Title     string `json:"title"`
-	Repo      string `json:"repo,omitempty"`
-	URL       string `json:"url,omitempty"`
-	Attention string `json:"attention"`
-	Reason    string `json:"reason"`
-	DoneAt    string `json:"done_at,omitempty"`
+	ID        string   `json:"id"`
+	Kind      string   `json:"kind"`
+	Title     string   `json:"title"`
+	Repo      string   `json:"repo,omitempty"`
+	URL       string   `json:"url,omitempty"`
+	Attention string   `json:"attention"`
+	Reason    string   `json:"reason"`
+	DoneAt    string   `json:"done_at,omitempty"`
+	Entities  []Entity `json:"entities,omitempty"`
 }
 
 type Response struct {

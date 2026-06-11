@@ -75,6 +75,38 @@ The daemon currently tracks:
 - PR review requests assigned directly to you as `needs attention`
 - open PRs authored by you as `in progress`
 
+Radar checks GitHub rate limits before GitHub collection. When a budget is low, Radar pauses GitHub collection until GitHub's reset time. Neovim statusline polling reads cached daemon state and does not trigger GitHub requests.
+
+## Jira
+
+Radar can collect assigned Jira Cloud issues and attach them to matching items by ticket key, e.g. `ABC-123`.
+
+Configure credentials through the environment:
+
+```sh
+RADAR_JIRA_BASE_URL="https://your-site.atlassian.net"
+RADAR_JIRA_EMAIL="you@example.com"
+RADAR_JIRA_API_TOKEN="..."
+```
+
+The current JQL is:
+
+```sql
+assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC
+```
+
+## Git worktrees
+
+Radar can collect Git worktree information and attach it to matching items by ticket key, e.g. `ABC-123`.
+
+Configure repositories with:
+
+```sh
+RADAR_GIT_REPOS=/path/to/repo:/path/to/another/repo ./radar daemon
+```
+
+If unset, Radar tries the daemon's current working directory.
+
 ## Local state
 
 The daemon stores the latest attention items locally:

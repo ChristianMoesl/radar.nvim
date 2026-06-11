@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"radar.nvim/internal/client"
@@ -127,7 +128,19 @@ func startDetached(name string, args ...string) error {
 }
 
 func refresher(ctx context.Context, store *state.Store, logger *slog.Logger) func() {
+	var mu sync.Mutex
+	var lastRefresh time.Time
+
 	return func() {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if time.Since(lastRefresh) < 5*time.Minute {
+			logger.Debug("refresh skipped; recently refreshed")
+			return
+		}
+		lastRefresh = time.Now()
+
 		logger.Debug("refresh started")
 		previous := store.Items()
 		items := collector.Collect(ctx, previous, logger)
@@ -138,7 +151,7 @@ func refresher(ctx context.Context, store *state.Store, logger *slog.Logger) fun
 
 func refreshLoop(ctx context.Context, refresh func()) {
 	refresh()
-	ticker := time.NewTicker(time.Minute)
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
 	for {

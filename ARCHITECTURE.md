@@ -7,8 +7,11 @@
 - `lua/radar/`: Neovim integration, statusline component, notifications, and floating detail window.
 - `cmd/radar/`: single Go binary with CLI and daemon mode.
 - `internal/server/`: Unix socket API used by Neovim and CLI commands.
-- `internal/collector/`: orchestrates data collection from external systems.
-- `internal/github/`: GitHub collectors and remote state resolution.
+- `internal/collector/`: orchestrates ingestion, linking, and resolution.
+- `internal/github/`: GitHub ingestion and remote state resolution.
+- `internal/git/`: Git worktree ingestion.
+- `internal/jira/`: Jira Cloud issue ingestion.
+- `internal/linker/`: connects ingested entities to user-facing items.
 - `internal/state/`: local persistent item store.
 
 ## Process model
@@ -53,7 +56,7 @@ Radar has three active categories and one historical category:
 - `in_progress`
 - `done`
 
-Collectors ingest only active items. They should not blindly import already-completed remote items.
+Ingestion and linking are separate steps. Ingestion code talks to external systems and produces raw active items/entities. Linker code connects entities from different sources into one user-facing item. Collectors should not blindly import already-completed remote items.
 
 `done` is derived from previously tracked items. If an item was active in the local store and later disappears from the active collector result, the relevant integration checks the remote state. If the remote item resolved today, Radar moves it to `done`.
 
@@ -71,7 +74,7 @@ This allows fast startup and lets Neovim show cached information immediately.
 
 ## GitHub integration
 
-GitHub access currently uses the `gh` CLI.
+GitHub access currently uses the `gh` CLI. Radar tracks GitHub core/search rate limits through `gh api rate_limit`. When a budget is low, Radar pauses GitHub collection until GitHub's reset time instead of repeatedly retrying.
 
 Current GitHub collectors:
 
@@ -84,13 +87,43 @@ Resolution:
 - daemon fetches that PR remotely
 - if it was closed or merged today, it becomes `done`
 
+## Jira integration
+
+Jira integration uses the Jira Cloud REST API directly. Credentials are read from environment variables and are never written to Radar state:
+
+```sh
+RADAR_JIRA_BASE_URL=https://your-site.atlassian.net
+RADAR_JIRA_EMAIL=you@example.com
+RADAR_JIRA_API_TOKEN=...
+```
+
+The Jira collector emits issue entities for assigned non-done tickets. These entities are linked to GitHub PRs and Git worktrees by matching ticket keys such as `ABC-123`.
+
+## Git integration
+
+Git integration collects worktree entities from configured repositories.
+
+Configure roots with:
+
+```sh
+RADAR_GIT_REPOS=/path/to/repo:/path/to/another/repo radar daemon
+```
+
+If unset, Radar tries the daemon's current working directory.
+
+Worktree entities include path, branch, HEAD, dirty file count, and ahead/behind information when available.
+
+The linker attaches worktrees to GitHub/Jira-style items by matching ticket keys such as `ABC-123` in titles, branches, paths, URLs, or metadata.
+
+Worktrees that do not attach to another item become standalone `in_progress` items, except common base branches like `main`, `master`, `develop`, and `dev`.
+
 ## Neovim UI
 
 The statusline is the primary UI and must stay cheap and glanceable.
 
 The floating window is secondary and shows detailed item information. Opening it should use cached daemon state and must not block on network refreshes.
 
-Manual refresh is available from the floating window with `r`.
+Manual refresh is available from the floating window with `r`. Periodic Neovim statusline updates only load cached daemon state; they must not trigger network refreshes.
 
 ## Logging
 

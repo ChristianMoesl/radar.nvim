@@ -155,6 +155,25 @@ local function add_item(lines, line_items, item)
 	if item.id and item.id ~= "" then
 		table.insert(lines, string.format("   ID     : %s", item.id))
 	end
+	if item.entities and #item.entities > 0 then
+		table.insert(lines, "   Entities:")
+		for _, entity in ipairs(item.entities) do
+			local label = string.format("     - %s/%s", entity.source or "?", entity.kind or "?")
+			if entity.status and entity.status ~= "" then
+				label = label .. string.format(" [%s]", entity.status)
+			end
+			table.insert(lines, label)
+			if entity.branch and entity.branch ~= "" then
+				table.insert(lines, string.format("       branch: %s", entity.branch))
+			end
+			if entity.path and entity.path ~= "" then
+				table.insert(lines, string.format("       path: %s", entity.path))
+			end
+			if entity.url and entity.url ~= "" then
+				table.insert(lines, string.format("       url: %s", entity.url))
+			end
+		end
+	end
 	table.insert(lines, "")
 end
 
@@ -341,7 +360,7 @@ function M.setup(opts)
 		config.refresh_ms,
 		config.refresh_ms,
 		vim.schedule_wrap(function()
-			M.refresh()
+			M.load()
 		end)
 	)
 end
