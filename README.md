@@ -158,6 +158,8 @@ Example:
 ```lua
 require("radar").setup({
   radar_cmd = "/path/to/radar",
+  -- Automatically reload the lazy.nvim plugin when editing lua/radar/*.lua.
+  auto_reload_plugin = true,
 })
 ```
 

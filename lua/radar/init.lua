@@ -9,6 +9,7 @@ local config = {
 	notify_new_items = true,
 	prefer_local_radar_binary = true,
 	auto_reload_binary = true,
+	auto_reload_plugin = true,
 	icons = {
 		immediate = "🚨",
 		attention = "👀",
@@ -30,6 +31,7 @@ local state = {
 	seen_items_initialized = false,
 	radar_binary_path = nil,
 	radar_binary_mtime = nil,
+	reload_augroup = nil,
 }
 
 local ns = vim.api.nvim_create_namespace("radar")
@@ -104,6 +106,14 @@ end
 
 local function stop_daemon()
 	vim.fn.jobstart({ resolve_radar_cmd(), "stop" }, { detach = true })
+end
+
+local function stop_timer()
+	if state.timer then
+		state.timer:stop()
+		state.timer:close()
+		state.timer = nil
+	end
 end
 
 local function is_open()
@@ -243,7 +253,7 @@ local function add_item(lines, line_items, line_highlights, item)
 	append_field(fields, "id", item.id)
 	append_field(fields, "done", item.done_at)
 
-	local prefix = string.format("%s %-9s ", item_icon(item.attention), item_status(item.attention))
+	local prefix = string.format("  %-9s ", item_status(item.attention))
 	local title = item.title or "Untitled"
 	local line = prefix .. title
 	if #fields > 0 then
@@ -284,10 +294,10 @@ local function render_lines()
 	local line_items = {}
 	local line_highlights = {}
 	local groups = {
-		{ key = "immediate", title = "Need immediate attention" },
-		{ key = "attention", title = "Need attention" },
-		{ key = "in_progress", title = "In progress" },
-		{ key = "done", title = "Done today" },
+		{ key = "immediate", title = "Need immediate attention", icon = config.icons.immediate },
+		{ key = "attention", title = "Need attention", icon = config.icons.attention },
+		{ key = "in_progress", title = "In progress", icon = config.icons.in_progress },
+		{ key = "done", title = "Done today", icon = config.icons.done },
 	}
 
 	for _, group in ipairs(groups) do
@@ -295,8 +305,10 @@ local function render_lines()
 		for _, item in ipairs(state.items) do
 			if item.attention == group.key then
 				if not added then
-					table.insert(lines, group.title)
-					table.insert(lines, string.rep("─", #group.title))
+					local icon = group.icon or ""
+					local title = icon ~= "" and string.format("%s %s", icon, group.title) or group.title
+					table.insert(lines, title)
+					table.insert(lines, string.rep("─", vim.fn.strdisplaywidth(title)))
 					added = true
 				end
 				add_item(lines, line_items, line_highlights, item)
@@ -413,6 +425,50 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "RadarServiceStatusDisabled", { link = "Comment", default = true })
 end
 
+local function lazy_plugin_name()
+	local ok, lazy_config = pcall(require, "lazy.core.config")
+	if not ok then
+		return "radar.nvim-gui"
+	end
+
+	local root = vim.fn.resolve(plugin_root())
+	for name, plugin in pairs(lazy_config.plugins or {}) do
+		if plugin.dir and vim.fn.resolve(plugin.dir) == root then
+			return name
+		end
+	end
+
+	return "radar.nvim-gui"
+end
+
+local function setup_plugin_auto_reload()
+	if not config.auto_reload_plugin then
+		return
+	end
+
+	local ok = pcall(require, "lazy")
+	if not ok then
+		return
+	end
+
+	state.reload_augroup = vim.api.nvim_create_augroup("RadarPluginReload", { clear = true })
+	vim.api.nvim_create_autocmd("BufWritePost", {
+		group = state.reload_augroup,
+		pattern = plugin_root() .. "/lua/radar/*.lua",
+		callback = function()
+			local name = lazy_plugin_name()
+			M.teardown()
+
+			local reloaded, err = pcall(vim.cmd, "Lazy reload " .. name)
+			if reloaded then
+				vim.notify("Reloaded " .. name)
+			else
+				vim.notify("Failed to reload " .. name .. ": " .. tostring(err), vim.log.levels.ERROR)
+			end
+		end,
+	})
+end
+
 local function fetch(method, cb, retried)
 	if config.auto_reload_binary and state.radar_binary_path then
 		local current_mtime = binary_mtime(state.radar_binary_path)
@@ -485,9 +541,20 @@ function M.open()
 	end)
 end
 
+function M.teardown()
+	stop_timer()
+	if state.reload_augroup then
+		pcall(vim.api.nvim_del_augroup_by_id, state.reload_augroup)
+		state.reload_augroup = nil
+	end
+	close_window()
+end
+
 function M.setup(opts)
 	config = vim.tbl_deep_extend("force", config, opts or {})
+	stop_timer()
 	setup_highlights()
+	setup_plugin_auto_reload()
 
 	vim.api.nvim_create_user_command("Radar", M.open, {})
 	vim.api.nvim_create_user_command("RadarRefresh", function()
