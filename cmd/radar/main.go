@@ -40,6 +40,12 @@ func main() {
 		callDaemon("items")
 	case "refresh":
 		callDaemon("refresh")
+	case "ack":
+		if len(os.Args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: radar ack <item-id>")
+			os.Exit(2)
+		}
+		callDaemon("ack:" + os.Args[2])
 	case "log-path", "logs":
 		printLogPath()
 	case "state-path":
@@ -232,7 +238,7 @@ func printRateLimit() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: radar [daemon|stop|restart|status|summary|items|list|refresh|log-path|state-path|filters-path|rate-limit]")
+	fmt.Fprintln(os.Stderr, "usage: radar [daemon|stop|restart|status|summary|items|list|refresh|ack <item-id>|log-path|state-path|filters-path|rate-limit]")
 }
 
 func fatal(err error) {

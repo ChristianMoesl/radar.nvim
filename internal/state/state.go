@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"radar.nvim/internal/protocol"
 )
@@ -111,6 +112,70 @@ func (s *Store) Save() error {
 
 	s.logger.Debug("state saved", "path", s.path, "items", len(items))
 	return nil
+}
+
+func (s *Store) Acknowledge(itemID string) bool {
+	s.mu.Lock()
+	changed := false
+	ackAt := time.Now().UTC().Format(time.RFC3339)
+	items := s.items[:0]
+	for i := range s.items {
+		item := s.items[i]
+		if item.ID != itemID {
+			items = append(items, item)
+			continue
+		}
+		for j := range item.Entities {
+			if item.Entities[j].Metadata == nil {
+				item.Entities[j].Metadata = map[string]string{}
+			}
+			if latest := item.Entities[j].Metadata["latest_general_comment_at"]; latest != "" {
+				ackAt = latest
+			}
+			item.Entities[j].Metadata["general_comments_ack_at"] = ackAt
+			delete(item.Entities[j].Metadata, "new_general_comments")
+			changed = true
+		}
+		if item.Kind == "github_pr_activity" && !hasUnresolvedReviewThreads(item) {
+			changed = true
+			continue
+		}
+		if item.Kind == "github_own_pr" && !hasUnresolvedReviewThreads(item) {
+			item.Attention = "in_progress"
+			item.Reason = baseReason(item)
+			for j := range item.Entities {
+				item.Entities[j].Status = item.Reason
+			}
+		}
+		items = append(items, item)
+	}
+	s.items = items
+	s.mu.Unlock()
+
+	if changed {
+		if err := s.Save(); err != nil {
+			s.logger.Warn("could not save acknowledged state", "path", s.path, "error", err)
+		}
+	}
+	return changed
+}
+
+func hasUnresolvedReviewThreads(item protocol.Item) bool {
+	for _, entity := range item.Entities {
+		if entity.Metadata != nil && entity.Metadata["unresolved_review_threads"] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func baseReason(item protocol.Item) string {
+	for _, entity := range item.Entities {
+		if entity.Metadata != nil && entity.Metadata["base_reason"] != "" {
+			return entity.Metadata["base_reason"]
+		}
+	}
+	return "open PR"
 }
 
 func (s *Store) Items() []protocol.Item {

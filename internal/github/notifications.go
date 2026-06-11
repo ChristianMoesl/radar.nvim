@@ -40,25 +40,48 @@ type pullRequest struct {
 }
 
 type searchPullRequest struct {
-	Number      int    `json:"number"`
-	Title       string `json:"title"`
-	URL         string `json:"url"`
-	State       string `json:"state"`
-	Draft       bool   `json:"isDraft"`
-	ClosedAt    string `json:"closedAt"`
-	HeadRefName string `json:"headRefName"`
-	Body        string `json:"body"`
-	Author      *user  `json:"author"`
-	Repository  struct {
+	Number        int                  `json:"number"`
+	Title         string               `json:"title"`
+	URL           string               `json:"url"`
+	State         string               `json:"state"`
+	Draft         bool                 `json:"isDraft"`
+	ClosedAt      string               `json:"closedAt"`
+	HeadRefName   string               `json:"headRefName"`
+	Body          string               `json:"body"`
+	Author        *user                `json:"author"`
+	Comments      graphQLComments      `json:"comments"`
+	Reviews       graphQLComments      `json:"reviews"`
+	ReviewThreads graphQLReviewThreads `json:"reviewThreads"`
+	Repository    struct {
 		FullName      string `json:"fullName"`
 		NameWithOwner string `json:"nameWithOwner"`
 	} `json:"repository"`
+}
+
+type graphQLComments struct {
+	Nodes []graphQLComment `json:"nodes"`
+}
+
+type graphQLComment struct {
+	Author    user   `json:"author"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type graphQLReviewThreads struct {
+	Nodes []graphQLReviewThread `json:"nodes"`
+}
+
+type graphQLReviewThread struct {
+	ID         string          `json:"id"`
+	IsResolved bool            `json:"isResolved"`
+	Comments   graphQLComments `json:"comments"`
 }
 
 type graphQLPullRequestsResponse struct {
 	Data struct {
 		ReviewRequested graphQLSearchResult `json:"reviewRequested"`
 		Authored        graphQLSearchResult `json:"authored"`
+		Participated    graphQLSearchResult `json:"participated"`
 	} `json:"data"`
 }
 
@@ -66,7 +89,7 @@ type graphQLSearchResult struct {
 	Nodes []searchPullRequest `json:"nodes"`
 }
 
-const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: String!) {
+const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: String!, $participatedQuery: String!) {
   reviewRequested: search(query: $reviewQuery, type: ISSUE, first: 100) {
     nodes {
       ... on PullRequest {
@@ -79,6 +102,7 @@ const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: S
         body
         author { login }
         repository { nameWithOwner }
+        reviewThreads(first: 100) { nodes { id isResolved comments(first: 100) { nodes { author { login } createdAt } } } }
       }
     }
   }
@@ -94,31 +118,59 @@ const pullRequestsGraphQLQuery = `query($reviewQuery: String!, $authoredQuery: S
         body
         author { login }
         repository { nameWithOwner }
+        comments(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { author { login } createdAt } }
+        reviews(first: 100) { nodes { author { login } createdAt } }
+        reviewThreads(first: 100) { nodes { id isResolved comments(first: 100) { nodes { author { login } createdAt } } } }
+      }
+    }
+  }
+  participated: search(query: $participatedQuery, type: ISSUE, first: 100) {
+    nodes {
+      ... on PullRequest {
+        number
+        title
+        url
+        state
+        isDraft
+        headRefName
+        body
+        repository { nameWithOwner }
+        reviewThreads(first: 100) { nodes { id isResolved comments(first: 100) { nodes { author { login } createdAt } } } }
       }
     }
   }
 }`
 
-func FetchPullRequests(ctx context.Context, logger *slog.Logger) ([]protocol.Item, []protocol.Item, error) {
+func FetchPullRequests(ctx context.Context, previous []protocol.Item, logger *slog.Logger) ([]protocol.Item, []protocol.Item, []protocol.Item, error) {
 	var response graphQLPullRequestsResponse
 	args := []string{
 		"api", "graphql",
 		"-f", "query=" + pullRequestsGraphQLQuery,
 		"-F", "reviewQuery=is:pr is:open review-requested:@me",
 		"-F", "authoredQuery=is:pr is:open author:@me",
+		"-F", "participatedQuery=is:pr is:open commenter:@me -author:@me",
 	}
 	if err := ghJSON(ctx, args, &response); err != nil {
-		return nil, nil, fmt.Errorf("fetch github pull requests: %w", err)
+		return nil, nil, nil, fmt.Errorf("fetch github pull requests: %w", err)
+	}
+	login, err := currentLogin(ctx)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("fetch github current user: %w", err)
 	}
 
+	previousActivity := activityStateFromPrevious(previous)
 	reviewItems := reviewRequestItems(response.Data.ReviewRequested.Nodes)
 	authoredItems := authoredPullRequestItems(response.Data.Authored.Nodes)
+	activityItems := activityPullRequestItems(response.Data.Participated.Nodes, login, previousActivity)
+	applyActivity(authoredItems, response.Data.Authored.Nodes, login, previousActivity, true)
+	applyActivity(reviewItems, response.Data.ReviewRequested.Nodes, login, previousActivity, false)
 	logger.Debug(
 		"fetched github pull requests",
 		"review_requested", len(reviewItems),
 		"authored", len(authoredItems),
+		"activity", len(activityItems),
 	)
-	return reviewItems, authoredItems, nil
+	return reviewItems, authoredItems, activityItems, nil
 }
 
 func FetchReviewRequests(ctx context.Context, logger *slog.Logger) ([]protocol.Item, error) {
@@ -194,6 +246,144 @@ func PullRequestCollectionSummary(reviewCount int, authoredCount int) string {
 	return fmt.Sprintf("%d review requests, %d authored PRs", reviewCount, authoredCount)
 }
 
+type pullRequestActivity struct {
+	unresolvedReviewThreads int
+	newGeneralComments      int
+	latestGeneralCommentAt  string
+}
+
+type previousPullRequestActivity struct {
+	generalCommentsAckAt string
+}
+
+func activityPullRequestItems(prs []searchPullRequest, login string, previous map[string]previousPullRequestActivity) []protocol.Item {
+	items := make([]protocol.Item, 0)
+	for _, pr := range prs {
+		activity := detectActivity(pr, login, previous[prKey(repoName(pr), pr.Number)], false)
+		if !activity.needsAttention() {
+			continue
+		}
+		repo := repoName(pr)
+		item := protocol.Item{
+			ID:        fmt.Sprintf("github:pr_activity:%s:%d", repo, pr.Number),
+			Kind:      "github_pr_activity",
+			Title:     pr.Title,
+			Repo:      repo,
+			URL:       pr.URL,
+			Attention: "attention",
+			Reason:    activity.reason(),
+		}
+		item.Entities = []protocol.Entity{githubEntity(item, "pull_request", pr.HeadRefName, pr.Body)}
+		setActivityMetadata(&item.Entities[0], activity, previous[prKey(repo, pr.Number)])
+		items = append(items, item)
+	}
+	return items
+}
+
+func applyActivity(items []protocol.Item, prs []searchPullRequest, login string, previous map[string]previousPullRequestActivity, authored bool) {
+	activityByKey := map[string]pullRequestActivity{}
+	for _, pr := range prs {
+		key := prKey(repoName(pr), pr.Number)
+		activityByKey[key] = detectActivity(pr, login, previous[key], authored)
+	}
+	for i := range items {
+		if len(items[i].Entities) == 0 {
+			continue
+		}
+		repo, number, ok := parsePullRequestItemID(items[i].ID)
+		if !ok {
+			continue
+		}
+		key := prKey(repo, number)
+		activity := activityByKey[key]
+		if !activity.needsAttention() {
+			if previous[key].generalCommentsAckAt != "" {
+				setActivityMetadata(&items[i].Entities[0], activity, previous[key])
+			}
+			continue
+		}
+		if items[i].Entities[0].Metadata == nil {
+			items[i].Entities[0].Metadata = map[string]string{}
+		}
+		items[i].Entities[0].Metadata["base_reason"] = items[i].Reason
+		items[i].Attention = "attention"
+		items[i].Reason = activity.reason()
+		items[i].Entities[0].Status = items[i].Reason
+		setActivityMetadata(&items[i].Entities[0], activity, previous[key])
+	}
+}
+
+func detectActivity(pr searchPullRequest, login string, previous previousPullRequestActivity, authored bool) pullRequestActivity {
+	activity := pullRequestActivity{}
+	for _, thread := range pr.ReviewThreads.Nodes {
+		if thread.IsResolved || !relevantReviewThread(thread, login, authored) {
+			continue
+		}
+		activity.unresolvedReviewThreads++
+	}
+	if authored {
+		for _, comment := range append(pr.Comments.Nodes, pr.Reviews.Nodes...) {
+			if strings.EqualFold(comment.Author.Login, login) || comment.CreatedAt == "" || comment.CreatedAt <= previous.generalCommentsAckAt {
+				continue
+			}
+			activity.newGeneralComments++
+			if comment.CreatedAt > activity.latestGeneralCommentAt {
+				activity.latestGeneralCommentAt = comment.CreatedAt
+			}
+		}
+	}
+	return activity
+}
+
+func relevantReviewThread(thread graphQLReviewThread, login string, authored bool) bool {
+	latestMine := ""
+	latestOther := ""
+	for _, comment := range thread.Comments.Nodes {
+		if strings.EqualFold(comment.Author.Login, login) {
+			if comment.CreatedAt > latestMine {
+				latestMine = comment.CreatedAt
+			}
+		} else if comment.Author.Login != "" && comment.CreatedAt > latestOther {
+			latestOther = comment.CreatedAt
+		}
+	}
+	if authored {
+		return latestOther != ""
+	}
+	return latestMine != "" && latestOther > latestMine
+}
+
+func (activity pullRequestActivity) needsAttention() bool {
+	return activity.unresolvedReviewThreads > 0 || activity.newGeneralComments > 0
+}
+
+func (activity pullRequestActivity) reason() string {
+	parts := make([]string, 0, 2)
+	if activity.unresolvedReviewThreads > 0 {
+		parts = append(parts, fmt.Sprintf("%d unresolved review thread(s)", activity.unresolvedReviewThreads))
+	}
+	if activity.newGeneralComments > 0 {
+		parts = append(parts, fmt.Sprintf("%d new PR comment(s)", activity.newGeneralComments))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func setActivityMetadata(entity *protocol.Entity, activity pullRequestActivity, previous previousPullRequestActivity) {
+	if entity.Metadata == nil {
+		entity.Metadata = map[string]string{}
+	}
+	if activity.unresolvedReviewThreads > 0 {
+		entity.Metadata["unresolved_review_threads"] = strconv.Itoa(activity.unresolvedReviewThreads)
+	}
+	if activity.newGeneralComments > 0 {
+		entity.Metadata["new_general_comments"] = strconv.Itoa(activity.newGeneralComments)
+		entity.Metadata["latest_general_comment_at"] = activity.latestGeneralCommentAt
+	}
+	if previous.generalCommentsAckAt != "" {
+		entity.Metadata["general_comments_ack_at"] = previous.generalCommentsAckAt
+	}
+}
+
 func repoName(pr searchPullRequest) string {
 	if pr.Repository.FullName != "" {
 		return pr.Repository.FullName
@@ -206,6 +396,47 @@ func pullRequestMetadata(pr searchPullRequest) map[string]string {
 		return nil
 	}
 	return map[string]string{"author": pr.Author.Login}
+}
+
+func activityStateFromPrevious(previous []protocol.Item) map[string]previousPullRequestActivity {
+	state := map[string]previousPullRequestActivity{}
+	for _, item := range previous {
+		repo, number, ok := parsePullRequestItemID(item.ID)
+		if !ok {
+			continue
+		}
+		key := prKey(repo, number)
+		for _, entity := range item.Entities {
+			if entity.Metadata == nil {
+				continue
+			}
+			if ack := entity.Metadata["general_comments_ack_at"]; ack != "" && ack > state[key].generalCommentsAckAt {
+				state[key] = previousPullRequestActivity{generalCommentsAckAt: ack}
+			}
+		}
+	}
+	return state
+}
+
+func prKey(repo string, number int) string {
+	return fmt.Sprintf("%s:%d", repo, number)
+}
+
+func parsePullRequestItemID(id string) (string, int, bool) {
+	for _, prefix := range []string{"github:own_pr:", "github:review_request:", "github:pr_activity:"} {
+		if value, ok := strings.CutPrefix(id, prefix); ok {
+			idx := strings.LastIndex(value, ":")
+			if idx <= 0 || idx == len(value)-1 {
+				return "", 0, false
+			}
+			number, err := strconv.Atoi(value[idx+1:])
+			if err != nil {
+				return "", 0, false
+			}
+			return value[:idx], number, true
+		}
+	}
+	return "", 0, false
 }
 
 func ResolveDonePullRequests(ctx context.Context, previous []protocol.Item, active []protocol.Item, authoredComplete bool, logger *slog.Logger) []protocol.Item {

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 
 	"radar.nvim/internal/filters"
 	"radar.nvim/internal/protocol"
@@ -64,6 +65,12 @@ func (s *Server) handle(conn net.Conn) {
 		}
 
 		s.logger.Debug("request received", "method", req.Method)
+		if itemID, ok := strings.CutPrefix(req.Method, "ack:"); ok {
+			s.store.Acknowledge(itemID)
+			summary := s.store.Summary()
+			_ = encoder.Encode(protocol.Response{OK: true, Summary: &summary, Items: s.store.Items(), Services: s.store.Services()})
+			continue
+		}
 		switch req.Method {
 		case "summary":
 			items := s.filteredItems()

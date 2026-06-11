@@ -15,6 +15,9 @@ import (
 func TestFetchPullRequestsClassifiesGraphQLResults(t *testing.T) {
 	installFakeGH(t, `#!/bin/sh
 case "$*" in
+  *"api user"*)
+    echo '{"login":"me"}'
+    ;;
   *"api graphql"*)
     cat <<'JSON'
 {
@@ -58,11 +61,14 @@ JSON
 esac
 `)
 
-	reviewItems, authoredItems, err := FetchPullRequests(context.Background(), testLogger())
+	reviewItems, authoredItems, activityItems, err := FetchPullRequests(context.Background(), nil, testLogger())
 	if err != nil {
 		t.Fatalf("FetchPullRequests() error = %v", err)
 	}
 
+	if len(activityItems) != 0 {
+		t.Fatalf("activity item count = %d, want 0", len(activityItems))
+	}
 	if len(reviewItems) != 1 {
 		t.Fatalf("review item count = %d, want 1", len(reviewItems))
 	}
@@ -90,6 +96,36 @@ esac
 		Reason:    "draft PR",
 	})
 	assertEntity(t, authoredItems[0].Entities, "github:own_pr:acme/app:34", "draft PR", "DPSCAP-34-my-draft", "refs: DPSCAP-34")
+}
+
+func TestDetectActivityTracksReviewThreadsAndGeneralComments(t *testing.T) {
+	pr := searchPullRequest{
+		Comments: graphQLComments{Nodes: []graphQLComment{
+			{Author: user{Login: "someone"}, CreatedAt: "2026-06-11T10:00:00Z"},
+			{Author: user{Login: "me"}, CreatedAt: "2026-06-11T09:00:00Z"},
+			{Author: user{Login: "someone"}, CreatedAt: "2026-06-11T08:00:00Z"},
+		}},
+		ReviewThreads: graphQLReviewThreads{Nodes: []graphQLReviewThread{
+			{IsResolved: false, Comments: graphQLComments{Nodes: []graphQLComment{
+				{Author: user{Login: "me"}, CreatedAt: "2026-06-11T09:00:00Z"},
+				{Author: user{Login: "someone"}, CreatedAt: "2026-06-11T10:00:00Z"},
+			}}},
+			{IsResolved: true, Comments: graphQLComments{Nodes: []graphQLComment{
+				{Author: user{Login: "me"}, CreatedAt: "2026-06-11T09:00:00Z"},
+				{Author: user{Login: "someone"}, CreatedAt: "2026-06-11T10:00:00Z"},
+			}}},
+		}},
+	}
+
+	activity := detectActivity(pr, "me", previousPullRequestActivity{generalCommentsAckAt: "2026-06-11T09:30:00Z"}, true)
+	if activity.unresolvedReviewThreads != 1 || activity.newGeneralComments != 1 || activity.latestGeneralCommentAt != "2026-06-11T10:00:00Z" {
+		t.Fatalf("activity = %+v, want one unresolved thread and one new general comment", activity)
+	}
+
+	activity = detectActivity(pr, "me", previousPullRequestActivity{}, false)
+	if activity.unresolvedReviewThreads != 1 || activity.newGeneralComments != 0 {
+		t.Fatalf("participated activity = %+v, want one unresolved participated thread only", activity)
+	}
 }
 
 func TestResolveDonePullRequestsSkipsRemoteFetchWhenAuthoredIncomplete(t *testing.T) {

@@ -422,6 +422,17 @@ local function ensure_window()
 		local line = vim.api.nvim_win_get_cursor(0)[1]
 		local item = state.line_items[line]
 		if item then
+			run({ resolve_radar_cmd(), "ack", item.id }, function(result)
+				if result.code == 0 then
+					local response = decode_json(result.stdout)
+					if response then
+						state.summary = response.summary or state.summary
+						state.items = response.items or state.items
+						state.services = response.services or state.services
+						render_window()
+					end
+				end
+			end)
 			open_url(item.url)
 		end
 	end, { buffer = state.buf, silent = true })

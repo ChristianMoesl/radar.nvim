@@ -24,7 +24,7 @@ type Result struct {
 }
 
 func Collect(ctx context.Context, previous []protocol.Item, logger *slog.Logger) Result {
-	ingested := Ingest(ctx, logger)
+	ingested := Ingest(ctx, previous, logger)
 	items := linker.Link(linker.Input{
 		Items:    ingested.Items,
 		Entities: ingested.Entities,
@@ -33,7 +33,7 @@ func Collect(ctx context.Context, previous []protocol.Item, logger *slog.Logger)
 	return Result{Items: items, Services: ingested.Services}
 }
 
-func Ingest(ctx context.Context, logger *slog.Logger) Ingested {
+func Ingest(ctx context.Context, previous []protocol.Item, logger *slog.Logger) Ingested {
 	result := Ingested{
 		Items:    make([]protocol.Item, 0),
 		Entities: make([]protocol.Entity, 0),
@@ -42,7 +42,7 @@ func Ingest(ctx context.Context, logger *slog.Logger) Ingested {
 
 	githubStatus, githubAllowed := github.GraphQLServiceStatus(ctx, logger)
 	if githubAllowed {
-		reviewItems, authoredItems, err := github.FetchPullRequests(ctx, logger)
+		reviewItems, authoredItems, activityItems, err := github.FetchPullRequests(ctx, previous, logger)
 		if err != nil {
 			logger.Warn("github pull request collection failed", "error", err)
 			githubStatus.Status = "error"
@@ -50,6 +50,7 @@ func Ingest(ctx context.Context, logger *slog.Logger) Ingested {
 		} else {
 			result.Items = append(result.Items, reviewItems...)
 			result.Items = append(result.Items, authoredItems...)
+			result.Items = append(result.Items, activityItems...)
 			result.GitHubAuthoredComplete = true
 			githubStatus.Detail = github.PullRequestCollectionSummary(len(reviewItems), len(authoredItems))
 		}
