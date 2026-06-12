@@ -16,6 +16,7 @@ import (
 )
 
 const repoCacheTTL = 24 * time.Hour
+const trackedPullRequestCacheTTL = 30 * time.Minute
 
 type repoListEntry struct {
 	NameWithOwner string `json:"nameWithOwner"`
@@ -30,24 +31,36 @@ type repoCacheOrg struct {
 	Repos     []string `json:"repos"`
 }
 
+type trackedPullRequestCacheFile struct {
+	Targets map[string]trackedPullRequestCacheEntry `json:"targets"`
+}
+
+type trackedPullRequestCacheEntry struct {
+	FetchedAt string              `json:"fetched_at"`
+	PRs       []searchPullRequest `json:"prs"`
+}
+
 func FetchRulePullRequests(ctx context.Context, cfg filters.Config, logger *slog.Logger) ([]protocol.Item, error) {
-	targets := trackingTargets(ctx, cfg, logger)
+	targets := trackingTargets(cfg, logger)
 	if len(targets) == 0 {
 		return nil, nil
 	}
 
 	items := make([]protocol.Item, 0)
 	seen := map[string]bool{}
-	for _, target := range targets {
-		if !EnsureSearchBudget(ctx, logger) {
+	cache, _ := readTrackedPullRequestCache()
+	cacheChanged := false
+	for _, group := range groupedTrackingTargets(targets) {
+		prs, changed, err := cachedSearchPullRequestsByOwnerAndAuthor(ctx, group.owner, group.user, &cache, logger)
+		if changed {
+			cacheChanged = true
+		}
+		if err != nil {
+			logger.Warn("github tracked pull request search failed", "owner", group.owner, "user", group.user, "error", err)
 			break
 		}
-		prs, err := searchPullRequestsByRepoAndAuthor(ctx, target.repo, target.user)
-		if err != nil {
-			return items, err
-		}
 		for _, pr := range prs {
-			if !target.matches(pr) {
+			if !group.matches(pr) {
 				continue
 			}
 			key := fmt.Sprintf("%s:%d", repoName(pr), pr.Number)
@@ -58,21 +71,40 @@ func FetchRulePullRequests(ctx context.Context, cfg filters.Config, logger *slog
 			items = append(items, trackedPullRequestItem(pr))
 		}
 	}
+	if cacheChanged {
+		if err := writeTrackedPullRequestCache(cache); err != nil {
+			logger.Warn("could not write github tracked pull request cache", "error", err)
+		}
+	}
 	logger.Debug("fetched github rule pull requests", "count", len(items), "targets", len(targets))
 	return items, nil
 }
 
 type trackingTarget struct {
-	repo        string
+	owner       string
 	repoPattern string
 	user        string
 }
 
-func (target trackingTarget) matches(pr searchPullRequest) bool {
-	return filters.MatchPattern(target.repo, repoName(pr)) && pr.Author != nil && filters.MatchPattern(target.user, pr.Author.Login)
+type trackingTargetGroup struct {
+	owner   string
+	user    string
+	targets []trackingTarget
 }
 
-func trackingTargets(ctx context.Context, cfg filters.Config, logger *slog.Logger) []trackingTarget {
+func (group trackingTargetGroup) matches(pr searchPullRequest) bool {
+	if pr.Author == nil || !filters.MatchPattern(group.user, pr.Author.Login) {
+		return false
+	}
+	for _, target := range group.targets {
+		if filters.MatchPattern(target.repoPattern, repoName(pr)) {
+			return true
+		}
+	}
+	return false
+}
+
+func trackingTargets(cfg filters.Config, logger *slog.Logger) []trackingTarget {
 	targets := make([]trackingTarget, 0)
 	seen := map[string]bool{}
 	for _, rule := range cfg.Rules {
@@ -82,24 +114,55 @@ func trackingTargets(ctx context.Context, cfg filters.Config, logger *slog.Logge
 		}
 		for _, user := range exactUsers(rule.Users) {
 			for _, repoPattern := range rule.Repos {
-				for _, repo := range expandRepoPatternBestEffort(ctx, repoPattern, logger) {
-					key := strings.ToLower(repo + "\x00" + user)
-					if seen[key] {
-						continue
-					}
-					seen[key] = true
-					targets = append(targets, trackingTarget{repo: repo, repoPattern: repoPattern, user: user})
+				repoPattern = strings.TrimSpace(repoPattern)
+				owner, ok := ownerFromRepoPattern(repoPattern)
+				if !ok {
+					logger.Debug("skipping github rule repo pattern; owner wildcard is not supported", "pattern", repoPattern)
+					continue
 				}
+				key := strings.ToLower(owner + "\x00" + repoPattern + "\x00" + user)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				targets = append(targets, trackingTarget{owner: owner, repoPattern: repoPattern, user: user})
 			}
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool {
-		if targets[i].repo == targets[j].repo {
+		if targets[i].owner == targets[j].owner {
+			if targets[i].user == targets[j].user {
+				return targets[i].repoPattern < targets[j].repoPattern
+			}
 			return targets[i].user < targets[j].user
 		}
-		return targets[i].repo < targets[j].repo
+		return targets[i].owner < targets[j].owner
 	})
 	return targets
+}
+
+func groupedTrackingTargets(targets []trackingTarget) []trackingTargetGroup {
+	byKey := map[string]int{}
+	groups := make([]trackingTargetGroup, 0)
+	for _, target := range targets {
+		key := strings.ToLower(target.owner + "\x00" + target.user)
+		index, ok := byKey[key]
+		if !ok {
+			index = len(groups)
+			byKey[key] = index
+			groups = append(groups, trackingTargetGroup{owner: target.owner, user: target.user})
+		}
+		groups[index].targets = append(groups[index].targets, target)
+	}
+	return groups
+}
+
+func ownerFromRepoPattern(pattern string) (string, bool) {
+	owner, repo, ok := strings.Cut(pattern, "/")
+	if !ok || owner == "" || repo == "" || strings.Contains(owner, "*") {
+		return "", false
+	}
+	return owner, true
 }
 
 func exactUsers(users []string) []string {
@@ -219,11 +282,89 @@ func writeRepoCache(cache repoCacheFile) error {
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 
-func searchPullRequestsByRepoAndAuthor(ctx context.Context, repo string, author string) ([]searchPullRequest, error) {
+func cachedSearchPullRequestsByOwnerAndAuthor(ctx context.Context, owner string, author string, cache *trackedPullRequestCacheFile, logger *slog.Logger) ([]searchPullRequest, bool, error) {
+	if cache.Targets == nil {
+		cache.Targets = map[string]trackedPullRequestCacheEntry{}
+	}
+	key := trackedPullRequestCacheKey(owner, author)
+	entry, hasEntry := cache.Targets[key]
+	if hasEntry && !trackedPullRequestCacheExpired(entry) {
+		return entry.PRs, false, nil
+	}
+
+	if !EnsureSearchBudget(ctx, logger) {
+		if hasEntry {
+			logger.Debug("using stale github tracked pull request cache", "owner", owner, "user", author)
+			return entry.PRs, false, nil
+		}
+		return nil, false, nil
+	}
+
+	prs, err := searchPullRequestsByOwnerAndAuthor(ctx, owner, author)
+	if err != nil {
+		if hasEntry {
+			logger.Debug("using stale github tracked pull request cache after search failure", "owner", owner, "user", author, "error", err)
+			return entry.PRs, false, nil
+		}
+		return nil, false, err
+	}
+	cache.Targets[key] = trackedPullRequestCacheEntry{FetchedAt: time.Now().UTC().Format(time.RFC3339), PRs: prs}
+	return prs, true, nil
+}
+
+func trackedPullRequestCacheKey(owner string, author string) string {
+	return strings.ToLower(owner + "\x00" + author)
+}
+
+func trackedPullRequestCacheExpired(entry trackedPullRequestCacheEntry) bool {
+	fetchedAt, err := time.Parse(time.RFC3339, entry.FetchedAt)
+	return err != nil || time.Since(fetchedAt) > trackedPullRequestCacheTTL
+}
+
+func trackedPullRequestCachePath() (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "radar", "github-tracked-prs.json"), nil
+}
+
+func readTrackedPullRequestCache() (trackedPullRequestCacheFile, error) {
+	path, err := trackedPullRequestCachePath()
+	if err != nil {
+		return trackedPullRequestCacheFile{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return trackedPullRequestCacheFile{}, err
+	}
+	var cache trackedPullRequestCacheFile
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return trackedPullRequestCacheFile{}, err
+	}
+	return cache, nil
+}
+
+func writeTrackedPullRequestCache(cache trackedPullRequestCacheFile) error {
+	path, err := trackedPullRequestCachePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o600)
+}
+
+func searchPullRequestsByOwnerAndAuthor(ctx context.Context, owner string, author string) ([]searchPullRequest, error) {
 	var prs []searchPullRequest
 	args := []string{
 		"search", "prs",
-		"--repo", repo,
+		"--owner", owner,
 		"--author", author,
 		"--state", "open",
 		"--limit", "100",
