@@ -7,16 +7,17 @@ import (
 	"radar.nvim/internal/filters"
 	gitcollector "radar.nvim/internal/git"
 	"radar.nvim/internal/github"
+	"radar.nvim/internal/ingestion"
 	"radar.nvim/internal/jira"
 	"radar.nvim/internal/linker"
 	"radar.nvim/internal/protocol"
 )
 
 type Ingested struct {
-	Items                  []protocol.Item
-	Entities               []protocol.Entity
-	Services               []protocol.ServiceStatus
-	GitHubAuthoredComplete bool
+	Items    []protocol.Item
+	Entities []protocol.Entity
+	Services []protocol.ServiceStatus
+	Results  map[string]ingestion.Result
 }
 
 type Result struct {
@@ -24,13 +25,33 @@ type Result struct {
 	Services []protocol.ServiceStatus
 }
 
+func Sources() []ingestion.Source {
+	return []ingestion.Source{
+		github.NewService(),
+		jira.NewService(),
+		gitcollector.NewService(),
+	}
+}
+
 func Collect(ctx context.Context, previous []protocol.Item, logger *slog.Logger) Result {
+	sources := Sources()
 	ingested := Ingest(ctx, previous, logger)
 	items := linker.Link(linker.Input{
 		Items:    ingested.Items,
 		Entities: ingested.Entities,
 	})
-	items = append(items, github.ResolveDonePullRequests(ctx, previous, items, ingested.GitHubAuthoredComplete, logger)...)
+	for _, source := range sources {
+		reconciler, ok := source.(ingestion.Reconciler)
+		if !ok {
+			continue
+		}
+		items = append(items, reconciler.ReconcileDone(ctx, ingestion.ReconcileRequest{
+			Previous: previous,
+			Active:   items,
+			Result:   ingested.Results[source.Name()],
+			Logger:   logger,
+		})...)
+	}
 	return Result{Items: items, Services: ingested.Services}
 }
 
@@ -39,67 +60,36 @@ func Ingest(ctx context.Context, previous []protocol.Item, logger *slog.Logger) 
 		Items:    make([]protocol.Item, 0),
 		Entities: make([]protocol.Entity, 0),
 		Services: make([]protocol.ServiceStatus, 0, 3),
+		Results:  map[string]ingestion.Result{},
 	}
 
-	githubStatus, githubAllowed := github.GraphQLServiceStatus(ctx, logger)
-	if githubAllowed {
-		filterCfg, filterErr := filters.Load()
-		if filterErr != nil {
-			logger.Warn("could not load filters for github rule collection", "error", filterErr)
-		}
-		reviewItems, authoredItems, activityItems, err := github.FetchPullRequests(ctx, previous, logger)
-		if err != nil {
-			logger.Warn("github pull request collection failed", "error", err)
-			githubStatus.Status = "error"
-			githubStatus.Detail = err.Error()
-		} else {
-			result.Items = append(result.Items, reviewItems...)
-			result.Items = append(result.Items, authoredItems...)
-			result.Items = append(result.Items, activityItems...)
-			trackedCount := 0
-			if filterErr == nil {
-				trackedItems, err := github.FetchRulePullRequests(ctx, filterCfg, logger)
-				if err != nil {
-					logger.Warn("github rule pull request collection failed", "error", err)
-				} else {
-					trackedCount = len(trackedItems)
-					result.Items = appendMissingPullRequests(result.Items, trackedItems)
-				}
-			}
-			result.GitHubAuthoredComplete = true
-			githubStatus.Detail = github.PullRequestCollectionSummary(len(reviewItems), len(authoredItems), trackedCount)
-		}
-	}
-	result.Services = append(result.Services, githubStatus)
-
-	jiraEntities, jiraStatus, err := jira.FetchAssignedIssues(ctx, logger)
+	filterCfg, err := filters.Load()
 	if err != nil {
-		logger.Warn("jira issue collection failed", "error", err)
+		logger.Warn("could not load filters for ingestion", "error", err)
 	}
-	result.Services = append(result.Services, jiraStatus)
-	result.Entities = append(result.Entities, jiraEntities...)
 
-	gitEntities, gitStatus := gitcollector.FetchWorktrees(ctx, logger)
-	result.Services = append(result.Services, gitStatus)
-	result.Entities = append(result.Entities, gitEntities...)
-	return result
-}
-
-func appendMissingPullRequests(items []protocol.Item, candidates []protocol.Item) []protocol.Item {
-	seen := map[string]bool{}
-	for _, item := range items {
-		if item.URL != "" {
-			seen[item.URL] = true
+	for _, source := range Sources() {
+		status := ingestion.StatusResult{
+			Status: protocol.ServiceStatus{Name: source.Name(), Status: "ok"},
+			CanRun: true,
 		}
-	}
-	for _, item := range candidates {
-		if item.URL != "" && seen[item.URL] {
+		if reporter, ok := source.(ingestion.StatusReporter); ok {
+			status = reporter.Status(ctx, logger)
+		}
+		result.Services = append(result.Services, status.Status)
+		if !status.CanRun {
 			continue
 		}
-		items = append(items, item)
-		if item.URL != "" {
-			seen[item.URL] = true
-		}
+
+		ingested := source.Ingest(ctx, ingestion.Request{
+			Previous: previous,
+			Filters:  filterCfg,
+			Logger:   logger,
+		})
+		result.Results[source.Name()] = ingested
+		result.Items = append(result.Items, ingested.Items...)
+		result.Entities = append(result.Entities, ingested.Entities...)
 	}
-	return items
+
+	return result
 }
