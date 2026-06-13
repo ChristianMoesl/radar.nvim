@@ -15,9 +15,10 @@ type Summary struct {
 }
 
 type ServiceStatus struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
+	Name           string `json:"name"`
+	Status         string `json:"status"`
+	Detail         string `json:"detail,omitempty"`
+	SourceRefCount int    `json:"source_ref_count,omitempty"`
 }
 
 type SourceRef struct {

@@ -10,7 +10,6 @@ local config = {
 	notify_new_items = true,
 	prefer_local_radar_binary = true,
 	auto_reload_binary = true,
-	auto_reload_plugin = true,
 	icons = {
 		immediate = "🚨",
 		attention = "👀",
@@ -37,7 +36,6 @@ local state = {
 	seen_items_initialized = false,
 	radar_binary_path = nil,
 	radar_binary_mtime = nil,
-	reload_augroup = nil,
 }
 
 local ns = vim.api.nvim_create_namespace("radar")
@@ -256,10 +254,12 @@ end
 local function add_service(lines, line_highlights, service)
 	local name = service.name or "unknown"
 	local status = service.status or "unknown"
+	local source_ref_count = service.source_ref_count or 0
 	local detail = service.detail or ""
 	local prefix = string.format("  %-8s ", name)
 	local status_text = string.format("%-8s", status)
-	local line = prefix .. status_text
+	local count_text = string.format("%4d refs", source_ref_count)
+	local line = prefix .. status_text .. "  " .. count_text
 	if detail ~= "" then
 		line = line .. "  " .. detail
 	end
@@ -340,7 +340,7 @@ local function render_lines()
 
 	if #state.services > 0 then
 		table.insert(lines, "")
-		local title = "Ingestion services"
+		local title = "Sources"
 		table.insert(lines, title)
 		table.insert(lines, string.rep("─", #title))
 		for _, service in ipairs(state.services) do
@@ -460,49 +460,6 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "RadarServiceStatusInitializing", { link = "Comment", default = true })
 end
 
-local function lazy_plugin_name()
-	local ok, lazy_config = pcall(require, "lazy.core.config")
-	if not ok then
-		return "radar.nvim-gui"
-	end
-
-	local root = vim.fn.resolve(plugin_root())
-	for name, plugin in pairs(lazy_config.plugins or {}) do
-		if plugin.dir and vim.fn.resolve(plugin.dir) == root then
-			return name
-		end
-	end
-
-	return "radar.nvim-gui"
-end
-
-local function setup_plugin_auto_reload()
-	if not config.auto_reload_plugin then
-		return
-	end
-
-	local ok = pcall(require, "lazy")
-	if not ok then
-		return
-	end
-
-	state.reload_augroup = vim.api.nvim_create_augroup("RadarPluginReload", { clear = true })
-	vim.api.nvim_create_autocmd("BufWritePost", {
-		group = state.reload_augroup,
-		pattern = plugin_root() .. "/lua/radar/*.lua",
-		callback = function()
-			local name = lazy_plugin_name()
-			M.teardown()
-
-			local reloaded, err = pcall(vim.cmd, "Lazy reload " .. name)
-			if reloaded then
-				vim.notify("Reloaded " .. name)
-			else
-				vim.notify("Failed to reload " .. name .. ": " .. tostring(err), vim.log.levels.ERROR)
-			end
-		end,
-	})
-end
 
 local function fetch(method, cb, retried)
 	if config.auto_reload_binary and state.radar_binary_path then
@@ -583,10 +540,6 @@ end
 
 function M.teardown()
 	stop_timer()
-	if state.reload_augroup then
-		pcall(vim.api.nvim_del_augroup_by_id, state.reload_augroup)
-		state.reload_augroup = nil
-	end
 	close_window()
 end
 
@@ -594,7 +547,6 @@ function M.setup(opts)
 	config = vim.tbl_deep_extend("force", config, opts or {})
 	stop_timer()
 	setup_highlights()
-	setup_plugin_auto_reload()
 
 	vim.api.nvim_create_user_command("Radar", M.open, {})
 	vim.api.nvim_create_user_command("RadarRefresh", function()

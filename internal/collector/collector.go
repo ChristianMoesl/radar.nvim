@@ -76,8 +76,8 @@ func Ingest(ctx context.Context, previous []protocol.Task, logger *slog.Logger) 
 		if reporter, ok := source.(ingestion.StatusReporter); ok {
 			status = reporter.Status(ctx, logger)
 		}
-		result.Services = append(result.Services, status.Status)
 		if !status.CanRun {
+			result.Services = append(result.Services, status.Status)
 			continue
 		}
 
@@ -86,10 +86,29 @@ func Ingest(ctx context.Context, previous []protocol.Task, logger *slog.Logger) 
 			Filters:  filterCfg,
 			Logger:   logger,
 		})
+		status.Status.SourceRefCount = sourceRefCount(source.Name(), ingested)
+		result.Services = append(result.Services, status.Status)
 		result.Results[source.Name()] = ingested
 		result.Tasks = append(result.Tasks, ingested.Tasks...)
 		result.SourceRefs = append(result.SourceRefs, ingested.SourceRefs...)
 	}
 
 	return result
+}
+
+func sourceRefCount(sourceName string, result ingestion.Result) int {
+	seen := map[string]bool{}
+	for _, sourceRef := range result.SourceRefs {
+		if sourceRef.Source == sourceName {
+			seen[sourceRef.ID] = true
+		}
+	}
+	for _, task := range result.Tasks {
+		for _, sourceRef := range task.SourceRefs {
+			if sourceRef.Source == sourceName {
+				seen[sourceRef.ID] = true
+			}
+		}
+	}
+	return len(seen)
 }
