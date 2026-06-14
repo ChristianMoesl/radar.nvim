@@ -19,14 +19,17 @@ import (
 	"radar.nvim/internal/server"
 	"radar.nvim/internal/socket"
 	"radar.nvim/internal/state"
+	"radar.nvim/internal/tmux"
+	"radar.nvim/internal/tui"
 )
 
 func main() {
-	command := "status"
-	if len(os.Args) > 1 {
-		command = os.Args[1]
+	if len(os.Args) == 1 {
+		runTUI()
+		return
 	}
 
+	command := os.Args[1]
 	switch command {
 	case "daemon":
 		runDaemon()
@@ -56,11 +59,52 @@ func main() {
 		printFiltersPath()
 	case "rate-limit", "rate-limits":
 		printRateLimit()
+	case "tmux":
+		runTmuxCommand()
 	case "help", "-h", "--help":
 		usage()
 	default:
 		usage()
 		os.Exit(2)
+	}
+}
+
+func runTUI() {
+	path, err := socket.Path()
+	if err != nil {
+		fatal(err)
+	}
+	if _, err := client.Call(path, "tasks"); err != nil {
+		executable, executableErr := os.Executable()
+		if executableErr != nil {
+			fatal(executableErr)
+		}
+		if err := startDetached(executable, "daemon"); err != nil {
+			fatal(err)
+		}
+		for range 20 {
+			time.Sleep(50 * time.Millisecond)
+			if _, err := client.Call(path, "tasks"); err == nil {
+				break
+			}
+		}
+	}
+	if err := tui.Run(path); err != nil {
+		fatal(err)
+	}
+}
+
+func runTmuxCommand() {
+	if len(os.Args) != 3 || os.Args[2] != "popup" {
+		fmt.Fprintln(os.Stderr, "usage: radar tmux popup")
+		os.Exit(2)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		fatal(err)
+	}
+	if err := tmux.Popup(executable); err != nil {
+		fatal(err)
 	}
 }
 
@@ -257,7 +301,7 @@ func printRateLimit() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: radar [daemon|stop|restart|status|summary|tasks|refresh|reset|ack <task-id>|log-path|state-path|filters-path|rate-limit]")
+	fmt.Fprintln(os.Stderr, "usage: radar [daemon|stop|restart|status|summary|tasks|refresh|reset|ack <task-id>|log-path|state-path|filters-path|rate-limit|tmux popup]")
 }
 
 func fatal(err error) {

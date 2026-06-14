@@ -1,72 +1,45 @@
-# radar.nvim
+# Radar
 
-`radar.nvim` is a small Neovim radar for keeping track of engineering work that needs your attention.
+Radar is a CLI-first tool for keeping track of engineering work that needs your attention. It combines a terminal UI, scriptable commands, a shared background daemon, and tmux integration in one Go binary.
 
-The statusline shows a compact summary of the current task counts:
+Build and open the interactive terminal UI:
 
-```text
-🚨1 👀3 ⏳2 ✅1 🔇4
+```sh
+go build -o radar ./cmd/radar
+./radar
 ```
 
-Where:
+The TUI shows tasks grouped by attention level and supports:
 
-- 🚨 urgent tasks that need immediate attention
-- 👀 tasks that need attention
-- ⏳ tasks currently in progress
-- ✅ tasks completed today
-- 🔇 low-priority tasks
+- `j`/`k` or arrow keys to select tasks
+- `enter` to acknowledge/open a task or switch to its tmux session
+- `r` to refresh and `R` to reset
+- `f` to edit filters
+- `q` or `esc` to close
 
-Details are available from Neovim with `:Radar`, which opens a rounded floating window:
+Open Radar in a tmux popup:
 
-```text
-Radar  🚨 1 urgent  👀 3 attention  ⏳ 2 progress  ✅ 1 done  🔇 4 low    <CR>: open  r: refresh  R: reset  f: filters  q: close
-
-🚨 Need immediate attention
-───────────────────────────
-  Review production hotfix  reason=review requested
-  ↳ github:pr:owner/repo:123
-
-👀 Need attention
-─────────────────
-  DPSCAP-544 Investigate flaky deploy
-  ↳ jira:issue:DPSCAP-544
-  ↳ tmux:session:$3
-
-⏳ In progress
-──────────────
-  radar-cli-tool
-  ↳ git:worktree:/path/to/radar
-
-Sources
-───────
-  github   ok           12 refs
-  jira     ok            4 refs
-  git      ok            3 refs
-  tmux     ok            2 refs
+```sh
+./radar tmux popup
 ```
 
 ## Architecture
 
-This project is split into two parts:
+Radar is a single Go binary with three interfaces:
 
-- `radar.nvim`: a small Lua Neovim plugin for the statusline and detail UI
-- `radar`: a Go binary with CLI commands and a daemon mode
+- the default interactive terminal UI
+- scriptable CLI commands
+- a shared background daemon
 
-Neovim talks to the daemon through a Unix socket. This lets multiple Neovim sessions share the same state without each session polling GitHub/Jira/etc. independently.
+The legacy Neovim plugin remains in `lua/radar/` for now. New functionality targets the CLI/TUI.
 
 ```text
-Neovim statusline -> radar.nvim -> Unix socket -> radar daemon -> GitHub/Jira/Git/tmux/etc.
+CLI / TUI / legacy Neovim plugin -> Unix socket -> radar daemon -> GitHub/Jira/Git/tmux/etc.
 ```
 
 ## Current status
 
 This is early scaffolding. The daemon currently uses the `gh` CLI to fetch GitHub review request notifications and open pull requests authored by you. Jira/Pi integrations will be added later.
-
-## Build
-
-```sh
-go build -o radar ./cmd/radar
-```
 
 ## Run
 
