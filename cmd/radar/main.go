@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,6 +92,24 @@ func runWorkstreamCommand() {
 		session := flags.String("session", "", "tmux session name")
 		noSwitch := flags.Bool("no-switch", false, "do not switch the current tmux client")
 		_ = flags.Parse(os.Args[3:])
+		if *name == "" {
+			reader := bufio.NewReader(os.Stdin)
+			if *repo == "" {
+				cwd, err := os.Getwd()
+				if err != nil {
+					fatal(err)
+				}
+				*repo = promptChoice(reader, "Repository", workstream.DiscoverRepos(context.Background(), workstream.ExecRunner{}, cwd))
+			}
+			if *base == "" {
+				branches, err := workstream.Branches(context.Background(), workstream.ExecRunner{}, *repo)
+				if err != nil {
+					fatal(err)
+				}
+				*base = promptChoice(reader, "Base branch", branches)
+			}
+			*name = promptLine(reader, "Workstream name")
+		}
 		result, err := workstream.Create(context.Background(), workstream.ExecRunner{}, workstream.CreateOptions{
 			Repo:        *repo,
 			Name:        *name,
@@ -108,6 +129,19 @@ func runWorkstreamCommand() {
 		session := flags.String("session", "", "tmux session name")
 		force := flags.Bool("force", false, "delete a worktree with local changes")
 		_ = flags.Parse(os.Args[3:])
+		if *path == "" {
+			reader := bufio.NewReader(os.Stdin)
+			paths, err := workstream.Paths("")
+			if err != nil {
+				fatal(err)
+			}
+			*path = promptChoice(reader, "Workstream", paths)
+			if strings.ToLower(promptLine(reader, "Delete "+*path+"? [y/N]")) != "y" {
+				fmt.Fprintln(os.Stderr, "workstream deletion cancelled")
+				return
+			}
+			*force = true
+		}
 		result, err := workstream.Delete(context.Background(), workstream.ExecRunner{}, *path, *session, *force)
 		if err != nil {
 			fatal(err)
@@ -116,6 +150,37 @@ func runWorkstreamCommand() {
 	default:
 		fmt.Fprintln(os.Stderr, "usage: radar workstream [create|delete]")
 		os.Exit(2)
+	}
+}
+
+func promptChoice(reader *bufio.Reader, label string, options []string) string {
+	if len(options) == 0 {
+		fatal(fmt.Errorf("no choices available for %s", strings.ToLower(label)))
+	}
+	fmt.Fprintln(os.Stderr, label+":")
+	for index, option := range options {
+		fmt.Fprintf(os.Stderr, "  %d. %s\n", index+1, option)
+	}
+	for {
+		value := promptLine(reader, "Choice")
+		index, err := strconv.Atoi(value)
+		if err == nil && index > 0 && index <= len(options) {
+			return options[index-1]
+		}
+		fmt.Fprintln(os.Stderr, "enter a listed choice number")
+	}
+}
+
+func promptLine(reader *bufio.Reader, label string) string {
+	for {
+		fmt.Fprint(os.Stderr, label+": ")
+		value, err := reader.ReadString('\n')
+		if err != nil {
+			fatal(err)
+		}
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
 	}
 }
 

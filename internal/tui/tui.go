@@ -32,6 +32,7 @@ type responseMsg struct {
 type actionMsg struct {
 	message string
 	err     error
+	refresh bool
 }
 
 type Model struct {
@@ -91,6 +92,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.ExecProcess(exec.Command(editor, path), func(err error) tea.Msg {
 				return actionMsg{message: "Filters updated", err: err}
 			})
+		case "c":
+			return m, runWorkstreamCommand("create")
+		case "d":
+			return m, runWorkstreamCommand("delete")
 		case "enter":
 			tasks := m.orderedTasks()
 			if len(tasks) == 0 {
@@ -113,6 +118,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.err
 		m.message = msg.message
 		if msg.err == nil {
+			if msg.refresh {
+				return m, m.call("refresh")
+			}
 			return m, m.call("tasks")
 		}
 	}
@@ -128,7 +136,7 @@ func (m Model) View() string {
 			s.Immediate, s.Attention, s.InProgress, s.Done, s.LowPriority)
 	}
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("j/k: move  enter: open/switch  r: refresh  R: reset  f: filters  q: close"))
+	b.WriteString(dimStyle.Render("j/k: move  enter: open/switch  c: create  d: delete  r: refresh  R: reset  f: filters  q: close"))
 	b.WriteString("\n\n")
 
 	if len(m.response.Tasks) == 0 && !m.loading {
@@ -181,6 +189,16 @@ func (m Model) View() string {
 		b.WriteString("\n" + errorStyle.Render(m.err.Error()))
 	}
 	return b.String()
+}
+
+func runWorkstreamCommand(command string) tea.Cmd {
+	executable, err := os.Executable()
+	if err != nil {
+		return func() tea.Msg { return actionMsg{err: err} }
+	}
+	return tea.ExecProcess(exec.Command(executable, "workstream", command), func(err error) tea.Msg {
+		return actionMsg{message: "Workstream " + command + " complete", err: err, refresh: true}
+	})
 }
 
 func (m Model) orderedTasks() []protocol.Task {

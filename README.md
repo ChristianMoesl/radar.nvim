@@ -37,6 +37,8 @@ This creates `~/workstreams/<repo>/small-fix`, copies `.env` and `.env.local` wh
 
 `--force` is required when the worktree contains local changes, including copied setup files.
 
+Run `radar workstream create` or `radar workstream delete` without flags for an interactive repository/branch/workstream picker. The same flows are available from the TUI with `c` and `d`.
+
 ## Architecture
 
 Radar is a single Go binary with three interfaces:
