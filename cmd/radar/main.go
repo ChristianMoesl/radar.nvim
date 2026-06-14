@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"radar.nvim/internal/state"
 	"radar.nvim/internal/tmux"
 	"radar.nvim/internal/tui"
+	"radar.nvim/internal/workstream"
 )
 
 func main() {
@@ -61,12 +63,68 @@ func main() {
 		printRateLimit()
 	case "tmux":
 		runTmuxCommand()
+	case "workstream", "fork":
+		runWorkstreamCommand()
 	case "help", "-h", "--help":
 		usage()
 	default:
 		usage()
 		os.Exit(2)
 	}
+}
+
+func runWorkstreamCommand() {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: radar workstream [create|delete]")
+		os.Exit(2)
+	}
+	switch os.Args[2] {
+	case "create":
+		flags := flag.NewFlagSet("radar workstream create", flag.ExitOnError)
+		repo := flags.String("repo", "", "repository path (defaults to current directory)")
+		name := flags.String("name", "", "workstream name")
+		branch := flags.String("branch", "", "new branch name (defaults to workstream name)")
+		base := flags.String("base", "", "branch or revision to fork from")
+		path := flags.String("path", "", "worktree path")
+		session := flags.String("session", "", "tmux session name")
+		noSwitch := flags.Bool("no-switch", false, "do not switch the current tmux client")
+		_ = flags.Parse(os.Args[3:])
+		result, err := workstream.Create(context.Background(), workstream.ExecRunner{}, workstream.CreateOptions{
+			Repo:        *repo,
+			Name:        *name,
+			Branch:      *branch,
+			Base:        *base,
+			Path:        *path,
+			SessionName: *session,
+			Switch:      !*noSwitch && os.Getenv("TMUX") != "",
+		})
+		if err != nil {
+			fatal(err)
+		}
+		printJSON(result)
+	case "delete":
+		flags := flag.NewFlagSet("radar workstream delete", flag.ExitOnError)
+		path := flags.String("path", "", "worktree path")
+		session := flags.String("session", "", "tmux session name")
+		force := flags.Bool("force", false, "delete a worktree with local changes")
+		_ = flags.Parse(os.Args[3:])
+		result, err := workstream.Delete(context.Background(), workstream.ExecRunner{}, *path, *session, *force)
+		if err != nil {
+			fatal(err)
+		}
+		printJSON(result)
+	default:
+		fmt.Fprintln(os.Stderr, "usage: radar workstream [create|delete]")
+		os.Exit(2)
+	}
+}
+
+func printJSON(value any) {
+	out, err := json.Marshal(value)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Println(string(out))
 }
 
 func runTUI() {
@@ -301,7 +359,7 @@ func printRateLimit() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: radar [daemon|stop|restart|status|summary|tasks|refresh|reset|ack <task-id>|log-path|state-path|filters-path|rate-limit|tmux popup]")
+	fmt.Fprintln(os.Stderr, "usage: radar [daemon|stop|restart|status|summary|tasks|refresh|reset|ack <task-id>|log-path|state-path|filters-path|rate-limit|tmux popup|workstream create|workstream delete]")
 }
 
 func fatal(err error) {

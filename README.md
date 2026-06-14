@@ -23,6 +23,20 @@ Open Radar in a tmux popup:
 ./radar tmux popup
 ```
 
+Create a workstream from a repository and base branch:
+
+```sh
+./radar workstream create --repo /path/to/repo --base origin/main --name small-fix
+```
+
+This creates `~/workstreams/<repo>/small-fix`, copies `.env` and `.env.local` when present, starts a tmux session with `pi` and `nvim` windows, and switches to it when run inside tmux. Commands return JSON for scripting. Remove the workstream and its tmux session with:
+
+```sh
+./radar workstream delete --path ~/workstreams/<repo>/small-fix --force
+```
+
+`--force` is required when the worktree contains local changes, including copied setup files.
+
 ## Architecture
 
 Radar is a single Go binary with three interfaces:
