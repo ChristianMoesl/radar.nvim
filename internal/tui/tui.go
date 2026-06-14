@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -35,6 +36,8 @@ type actionMsg struct {
 	refresh bool
 }
 
+type tickMsg time.Time
+
 type Model struct {
 	socketPath string
 	response   protocol.Response
@@ -42,10 +45,12 @@ type Model struct {
 	loading    bool
 	message    string
 	err        error
+	seen       map[int]bool
+	seenReady  bool
 }
 
 func New(socketPath string) Model {
-	return Model{socketPath: socketPath, loading: true}
+	return Model{socketPath: socketPath, loading: true, seen: map[int]bool{}}
 }
 
 func Run(socketPath string) error {
@@ -54,7 +59,7 @@ func Run(socketPath string) error {
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.call("tasks")
+	return tea.Batch(m.call("tasks"), tick())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -105,11 +110,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, activate(task, m.socketPath)
 		}
 	case responseMsg:
+		wasLoading := m.loading
 		m.loading = false
 		m.err = msg.err
 		if msg.err == nil {
 			m.response = msg.response
-			m.message = ""
+			if message := m.trackNewTasks(msg.response.Tasks); message != "" {
+				m.message = message
+			} else if wasLoading {
+				m.message = ""
+			}
 			if m.selected >= len(m.orderedTasks()) {
 				m.selected = max(0, len(m.orderedTasks())-1)
 			}
@@ -123,6 +133,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.call("tasks")
 		}
+	case tickMsg:
+		return m, tea.Batch(m.call("tasks"), tick())
 	}
 	return m, nil
 }
@@ -199,6 +211,32 @@ func runWorkstreamCommand(command string) tea.Cmd {
 	return tea.ExecProcess(exec.Command(executable, "workstream", command), func(err error) tea.Msg {
 		return actionMsg{message: "Workstream " + command + " complete", err: err, refresh: true}
 	})
+}
+
+func tick() tea.Cmd {
+	return tea.Tick(30*time.Second, func(now time.Time) tea.Msg {
+		return tickMsg(now)
+	})
+}
+
+func (m *Model) trackNewTasks(tasks []protocol.Task) string {
+	next := make(map[int]bool, len(tasks))
+	newTitles := make([]string, 0)
+	for _, task := range tasks {
+		next[task.ID] = true
+		if m.seenReady && !m.seen[task.ID] {
+			newTitles = append(newTitles, task.Title)
+		}
+	}
+	m.seen = next
+	m.seenReady = true
+	if len(newTitles) == 0 {
+		return ""
+	}
+	if len(newTitles) == 1 {
+		return "New task: " + newTitles[0]
+	}
+	return fmt.Sprintf("%d new tasks", len(newTitles))
 }
 
 func (m Model) orderedTasks() []protocol.Task {

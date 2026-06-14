@@ -2,6 +2,17 @@
 
 Radar is moving from a Neovim-plugin-first project to a CLI-first tool.
 
+## Status
+
+The migration described here is implemented on the `zwicki` branch:
+
+- bare `radar` opens the Bubble Tea TUI and auto-starts a detached daemon
+- existing status/task/refresh/reset/ack commands remain scriptable
+- the TUI covers task inspection, opening, acknowledgement, tmux switching, filters, refresh, and reset
+- `radar tmux popup` opens the TUI from tmux
+- `radar workstream create|delete` and TUI `c`/`d` flows absorb the current `fork.nvim` workflow
+- repository discovery, ordered branch selection, worktree creation, setup-file copying, tmux `pi`/`nvim` sessions, switching, and safe deletion are available outside Neovim
+
 The existing Neovim plugin stays in the repository for now, but it is legacy code. New product work should target the Go binary and daemon, not the Lua plugin.
 
 ## Motivation

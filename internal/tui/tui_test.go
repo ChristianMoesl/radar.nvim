@@ -48,3 +48,13 @@ func TestTmuxTargetUsesStableSessionID(t *testing.T) {
 		t.Fatalf("tmuxTarget() = %q, want $3", got)
 	}
 }
+
+func TestTrackNewTasksNotifiesAfterInitialLoad(t *testing.T) {
+	model := New("/tmp/radar.sock")
+	if got := model.trackNewTasks([]protocol.Task{{ID: 1, Title: "Existing"}}); got != "" {
+		t.Fatalf("initial trackNewTasks() = %q, want empty", got)
+	}
+	if got := model.trackNewTasks([]protocol.Task{{ID: 1, Title: "Existing"}, {ID: 2, Title: "Review change"}}); got != "New task: Review change" {
+		t.Fatalf("trackNewTasks() = %q, want new task message", got)
+	}
+}

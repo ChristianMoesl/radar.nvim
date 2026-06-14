@@ -1,12 +1,13 @@
 # Architecture
 
-`radar.nvim` is split into a small Neovim UI plugin and a Go backend daemon.
+Radar is a CLI-first tool built as one Go binary containing a TUI, scriptable commands, workstream management, and a shared backend daemon. The original Neovim plugin remains as a legacy frontend.
 
 ## Components
 
-- `lua/radar/`: Neovim integration, statusline component, notifications, and floating detail window.
-- `cmd/radar/`: single Go binary with CLI and daemon mode.
-- `internal/server/`: Unix socket API used by Neovim and CLI commands.
+- `cmd/radar/`: single Go binary with TUI, CLI, and daemon modes.
+- `internal/tui/`: Bubble Tea terminal UI.
+- `internal/workstream/`: repository discovery and worktree/tmux workstream lifecycle.
+- `internal/server/`: Unix socket API used by the TUI, CLI, and legacy Neovim plugin.
 - `internal/collector/`: orchestrates ingestion, linking, and resolution.
 - `internal/github/`: GitHub ingestion and remote state resolution.
 - `internal/git/`: Git worktree ingestion.
@@ -14,16 +15,17 @@
 - `internal/tmux/`: tmux session ingestion.
 - `internal/linker/`: connects ingested source refs to user-facing tasks.
 - `internal/state/`: local persistent task cache/state.
+- `lua/radar/`: legacy Neovim frontend.
 
 ## Process model
 
 There is one long-running daemon per user:
 
 ```text
-Neovim sessions -> radar CLI -> Unix socket -> radar daemon -> collectors
+TUI / CLI / legacy Neovim plugin -> Unix socket -> radar daemon -> collectors
 ```
 
-Multiple Neovim sessions share the same daemon and state. This avoids duplicated polling and keeps statusline reads fast.
+All frontends share the same daemon and state. This avoids duplicated polling and keeps interactive and scriptable status reads fast.
 
 The binary is intentionally single-file from a user perspective:
 
@@ -34,11 +36,14 @@ radar tasks
 radar refresh
 radar stop
 radar restart
+radar tmux popup
+radar workstream create
+radar workstream delete
 ```
 
 ## Communication
 
-Neovim does not call GitHub directly. It shells out to `radar`, which talks to the daemon over a Unix socket.
+Frontends do not call integrations directly. They talk to the daemon over a Unix socket.
 
 The socket protocol is newline-delimited JSON with a tiny request model:
 
@@ -58,7 +63,7 @@ SourceRef + TaskRecord => Task
 
 - `SourceRef`: a normalized reference/fact from a source system, such as a GitHub PR, Jira issue, local git worktree, or tmux session. Source refs have source-stable IDs like `github:pr:owner/repo:123`, `jira:issue:DPSCAP-544`, `git:worktree:<path>`, or `tmux:session:<session_id>`.
 - `TaskRecord`: persistent Radar-owned tracking state. It gives continuity across refreshes and will own local state such as stable numeric task IDs, known source ref IDs, first/last seen timestamps, and acknowledgements.
-- `Task`: the current projected user-facing task served to the CLI/Neovim UI. It has a Radar-owned integer ID and is computed from current source refs plus the matching task record.
+- `Task`: the current projected user-facing task served to the CLI/TUI. It has a Radar-owned integer ID and is computed from current source refs plus the matching task record.
 
 The target pipeline is:
 
@@ -94,7 +99,7 @@ The daemon currently stores the latest known projected tasks on disk:
 $XDG_STATE_HOME/radar/tasks.json
 ```
 
-This allows fast startup and lets Neovim show cached information immediately. The stored model will eventually move to explicit task records plus an optional task cache.
+This allows fast startup and lets the TUI show cached information immediately. The stored model will eventually move to explicit task records plus an optional task cache.
 
 ## Filters
 
@@ -104,9 +109,9 @@ Filters are user-owned JSON config, not daemon state:
 $XDG_CONFIG_HOME/radar/filters.json
 ```
 
-The daemon creates an example file on startup when it is missing. Neovim exposes it with `:RadarFilters` / `f` in the floating window.
+The daemon creates an example file on startup when it is missing. The TUI exposes it with `f`.
 
-Filters are applied when serving tasks from the daemon, so CLI and Neovim see the same view. Raw collected state stays unmodified on disk.
+Filters are applied when serving tasks from the daemon, so CLI and TUI see the same view. Raw collected state stays unmodified on disk.
 
 There are two filter effects:
 
@@ -193,13 +198,17 @@ Worktrees that do not attach to another task become standalone `in_progress` tas
 
 Tmux integration collects sessions from the local tmux server. Radar attaches sessions to matching tasks when their name contains a ticket key such as `ABC-123`, or when the session working directory matches a Git worktree path. Sessions that do not attach to another task become standalone `in_progress` tasks.
 
-## Neovim UI
+`radar tmux popup` opens the TUI in a tmux popup. Selecting a tmux-backed task switches the current client by stable session ID.
 
-The statusline is the primary UI and must stay cheap and glanceable.
+## Workstreams
 
-The floating window is secondary and shows detailed task information. Opening it should use cached daemon state and must not block on network refreshes.
+Workstreams absorb the useful workflow from `fork.nvim`. The application layer discovers repositories and branches, creates Git worktrees under `~/workstreams`, copies local setup files, and creates matching tmux sessions with `pi` and `nvim` windows. The same layer is used by scriptable commands and interactive TUI flows.
 
-Manual refresh is available from the floating window with `r`. Periodic Neovim statusline updates only load cached daemon state; they must not trigger network refreshes.
+Deletion refuses dirty worktrees unless explicitly forced, and creation rolls back partial worktrees/sessions when a later step fails.
+
+## Terminal UI
+
+The Bubble Tea TUI is the default interface. It reads cached daemon state, groups tasks by attention, shows source details, switches tmux sessions, opens task URLs, edits filters, refreshes/resets state, and launches interactive workstream creation/deletion. While open, it polls cached state every 30 seconds and surfaces newly appearing tasks without triggering integration refreshes.
 
 ## Logging
 

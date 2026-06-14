@@ -13,9 +13,12 @@ The TUI shows tasks grouped by attention level and supports:
 
 - `j`/`k` or arrow keys to select tasks
 - `enter` to acknowledge/open a task or switch to its tmux session
+- `c` to create and `d` to delete workstreams
 - `r` to refresh and `R` to reset
 - `f` to edit filters
 - `q` or `esc` to close
+
+While open, the TUI polls cached daemon state every 30 seconds and highlights newly appearing tasks without triggering integration refreshes.
 
 Open Radar in a tmux popup:
 
@@ -55,7 +58,7 @@ CLI / TUI / legacy Neovim plugin -> Unix socket -> radar daemon -> GitHub/Jira/G
 
 ## Current status
 
-This is early scaffolding. The daemon currently uses the `gh` CLI to fetch GitHub review request notifications and open pull requests authored by you. Jira/Pi integrations will be added later.
+Radar collects and links GitHub review activity, authored pull requests, Jira issues, Git worktrees, and tmux sessions. The CLI/TUI also owns the workstream create/delete workflow previously provided by `fork.nvim`.
 
 ## Run
 
@@ -94,7 +97,7 @@ The daemon currently tracks:
 - PR review requests assigned directly to you as `needs attention`
 - open PRs authored by you as `in progress`
 
-Radar checks GitHub rate limits before GitHub collection. When a budget is low, Radar pauses GitHub collection until GitHub's reset time. Neovim statusline polling reads cached daemon state and does not trigger GitHub requests.
+Radar checks GitHub rate limits before GitHub collection. When a budget is low, Radar pauses GitHub collection until GitHub's reset time. TUI and CLI status reads use cached daemon state and do not trigger GitHub requests.
 
 ## Jira
 
@@ -136,7 +139,7 @@ Radar reads the local tmux server with `tmux list-sessions`. If tmux is not inst
 
 Tmux session refs use `#{session_id}` for stable identity, so renaming a tmux session does not create a new Radar task. The current session name is stored as metadata and used for display/ticket matching.
 
-In the Neovim UI, press `<CR>` on a tmux session to switch to it with `tmux switch-client -t <session_id>`.
+In the TUI, press `enter` on a tmux session to switch to it with `tmux switch-client -t <session_id>`.
 
 ## Filters
 
@@ -169,17 +172,17 @@ Example:
 }
 ```
 
-Muted tasks are hidden from the GUI and statusline counts. Deprioritized tasks move to the low-priority section. Repository and user patterns support `*` wildcards, and rule matches are case-insensitive. Rules use AND semantics across keys; if both `repos` and `users` are set, both must match.
+Muted tasks are hidden from the TUI and summary counts. Deprioritized tasks move to the low-priority section. Repository and user patterns support `*` wildcards, and rule matches are case-insensitive. Rules use AND semantics across keys; if both `repos` and `users` are set, both must match.
 
 Rules with both `repos` and exact `users` also drive GitHub PR ingestion: Radar expands wildcard repositories by listing the owning org, caches that repository list for 24 hours, then searches exact repositories for open PRs by those users. This keeps rules like Renovate-in-owned-repos narrow without broad org-wide PR searches.
 
-In Neovim, use `:RadarFilters` or press `f` in the Radar window to edit the file. Changes are picked up on the next `:RadarRefresh`, periodic refresh, or Radar window reopen.
+Press `f` in the TUI to edit the file. Changes are picked up on the next refresh or TUI reopen.
 
 ## Local state
 
 The daemon stores the latest attention tasks locally. Task IDs are Radar-owned integers assigned from this local state.
 
-Use `./radar reset` or `:RadarReset` to delete this state and ingest everything again from scratch.
+Use `./radar reset` or press `R` in the TUI to delete this state and ingest everything again from scratch.
 
 ```sh
 ./radar state-path
@@ -219,9 +222,9 @@ Supported levels: `debug`, `info`, `warn`, `error`. Default is `info`.
 
 Set `RADAR_ENV=production` to disable source locations. Set `RADAR_LOG_COLOR=0` to disable colored logs.
 
-## Neovim setup
+## Legacy Neovim plugin
 
-Example:
+The original Neovim plugin remains available as a legacy frontend while integrations migrate to the CLI. New workflows should use the TUI or scriptable commands.
 
 ```lua
 require("radar").setup({

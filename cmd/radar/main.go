@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"radar.nvim/internal/client"
@@ -306,8 +307,15 @@ func restartDaemon() {
 }
 
 func startDetached(name string, args ...string) error {
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer devNull.Close()
+
 	process, err := os.StartProcess(name, append([]string{name}, args...), &os.ProcAttr{
-		Files: []*os.File{nil, os.Stderr, os.Stderr},
+		Files: []*os.File{devNull, devNull, devNull},
+		Sys:   &syscall.SysProcAttr{Setsid: true},
 	})
 	if err != nil {
 		return err
